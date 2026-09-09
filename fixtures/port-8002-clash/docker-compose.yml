@@ -1,0 +1,9 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8001:3000"
+  extra:
+    build: ./extra
+    ports:
+      - "8002:5000"

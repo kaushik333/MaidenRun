@@ -1,0 +1,474 @@
+import time
+from unittest.mock import patch
+
+import boto3
+from botocore.exceptions import ClientError
+from fastapi.testclient import TestClient
+from moto import mock_aws
+
+from app.aws.credentials import NoCredentialsError, get_session
+from app.aws.ec2 import Ec2LaunchError, HealthCheckTimeoutError
+from app.core.config import settings
+from app.main import app
+from app.validation.validator import ValidateRepoResponse
+from tests.conftest import create_instance_profile
+
+CORS_ORIGIN_HEADERS = {"Origin": "http://localhost:5173"}
+
+client = TestClient(app)
+
+AWS = {"access_key_id": "AKIA_TEST", "secret_access_key": "shh"}
+
+EXTERNAL_LLM_PAYLOAD = {
+    "repo_url": "https://github.com/kaushik/agent",
+    "aws": AWS,
+    "self_hosted_llm": False,
+    "instance_type": "t3.small",
+    "ebs_size_gb": 20,
+    "llm_provider": "openai",
+    "api_key": "sk-test",
+    "env_vars": [{"key": "PINECONE_API_KEY", "value": "pc-test"}],
+}
+
+SELF_HOSTED_LLM_PAYLOAD = {
+    "repo_url": "https://github.com/kaushik/agent",
+    "aws": AWS,
+    "self_hosted_llm": True,
+    "instance_type": "g4dn.xlarge",
+    "ebs_size_gb": 50,
+}
+
+VALID_COMPOSE_REPO = ValidateRepoResponse(valid=True, entry_point="compose")
+
+
+def _bootstrap_moto_account() -> None:
+    """Pre-creates the instance role infra/README.md asks the user to set up
+    once by hand — deploy() references it by name via app.aws.ec2."""
+    session = boto3.Session(
+        aws_access_key_id="test", aws_secret_access_key="test", region_name=settings.aws_default_region
+    )
+    create_instance_profile(session)
+
+
+def _no_op_health(*_args, **_kwargs) -> None:
+    """Drop-in replacement for wait_for_port_health that always succeeds instantly."""
+    return None
+
+
+def _poll_until_terminal(deployment_id: str, timeout_seconds: float = 5.0) -> dict:
+    """TestClient runs BackgroundTasks to completion before client.post()
+    returns, so the first poll is normally already terminal — this loop
+    only exists so the tests don't depend on that TestClient implementation
+    detail holding forever."""
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        status = client.get(f"/deploy/{deployment_id}/status").json()
+        if status.get("result") is not None or status.get("error") is not None:
+            return status
+        time.sleep(0.05)
+    raise TimeoutError(f"deployment {deployment_id} never reached a terminal state")
+
+
+def _deploy_and_wait(payload: dict, headers: dict | None = None) -> tuple[object, dict]:
+    response = client.post("/deploy", json=payload, headers=headers or {})
+    assert response.status_code == 202, response.text
+    status = _poll_until_terminal(response.json()["deployment_id"])
+    return response, status
+
+
+@mock_aws
+@patch("app.api.deploy.wait_for_port_health", side_effect=_no_op_health)
+@patch("app.api.deploy.validate_repo", return_value=VALID_COMPOSE_REPO)
+def test_deploy_openrouter_provider_accepted(_mock_validate, _mock_health) -> None:
+    _bootstrap_moto_account()
+    payload = {**EXTERNAL_LLM_PAYLOAD, "llm_provider": "openrouter", "api_key": "or-test"}
+    _response, status = _deploy_and_wait(payload)
+    assert status["error"] is None
+    assert status["result"] is not None
+
+
+@mock_aws
+@patch("app.api.deploy.wait_for_port_health", side_effect=_no_op_health)
+@patch("app.api.deploy.validate_repo", return_value=VALID_COMPOSE_REPO)
+def test_deploy_launches_both_instances_and_returns_real_links(_mock_validate, mock_health) -> None:
+    _bootstrap_moto_account()
+    _response, status = _deploy_and_wait(EXTERNAL_LLM_PAYLOAD)
+    assert status["error"] is None
+    result = status["result"]
+
+    assert result["app_url"].startswith("http://")
+    assert result["app_url"].endswith(":8001")
+    assert result["app_instance_id"].startswith("i-")
+
+    assert result["feedback_form_url"].startswith("http://")
+    assert result["feedback_form_url"].endswith(":8002")
+    assert ":8003" in result["feedback_dashboard_url"]
+    assert "token=" in result["feedback_dashboard_url"]  # unguessable-token-gated link, per IDEA.md
+    assert result["feedback_instance_id"].startswith("i-")
+    assert result["feedback_instance_id"] != result["app_instance_id"]  # genuinely two separate instances
+
+    assert all(step == "done" for step in status["steps"].values())
+    assert mock_health.call_count == 3  # :8001, :8002, :8003 each actually checked
+
+
+@mock_aws
+@patch("app.api.deploy.wait_for_port_health", side_effect=_no_op_health)
+@patch("app.api.deploy.validate_repo", return_value=VALID_COMPOSE_REPO)
+def test_deploy_sets_the_given_instance_names(_mock_validate, _mock_health) -> None:
+    _bootstrap_moto_account()
+    payload = {**EXTERNAL_LLM_PAYLOAD, "instance_name": "my-agent", "feedback_instance_name": "my-agent-feedback"}
+    _response, status = _deploy_and_wait(payload)
+    result = status["result"]
+
+    session = boto3.Session(
+        aws_access_key_id="test", aws_secret_access_key="test", region_name=settings.aws_default_region
+    )
+    ec2_client = session.client("ec2")
+
+    def name_tag(instance_id: str) -> str:
+        instance = ec2_client.describe_instances(InstanceIds=[instance_id])["Reservations"][0]["Instances"][0]
+        return next(t["Value"] for t in instance["Tags"] if t["Key"] == "Name")
+
+    assert name_tag(result["app_instance_id"]) == "my-agent"
+    assert name_tag(result["feedback_instance_id"]) == "my-agent-feedback"
+
+
+@mock_aws
+@patch("app.api.deploy.wait_for_port_health", side_effect=_no_op_health)
+@patch("app.api.deploy.validate_repo", return_value=VALID_COMPOSE_REPO)
+@patch("app.api.deploy.get_session", side_effect=get_session)
+def test_deploy_passes_the_chosen_region_to_get_session(_mock_get_session, _mock_validate, _mock_health) -> None:
+    _bootstrap_moto_account()
+    payload = {**EXTERNAL_LLM_PAYLOAD, "aws": {**AWS, "region": "eu-west-1"}}
+    response = client.post("/deploy", json=payload)
+    assert response.status_code == 202
+    # Called twice: once for the app's own session, once for the feedback
+    # stack's own session — separate boto3.Session objects (boto3 sessions
+    # aren't guaranteed safe for concurrent client creation across threads),
+    # but both carrying the same region.
+    assert _mock_get_session.call_count == 2
+    _mock_get_session.assert_any_call("AKIA_TEST", "shh", region="eu-west-1")
+    _mock_get_session.assert_any_call(region="eu-west-1")
+
+
+@mock_aws
+@patch("app.api.deploy.wait_for_port_health", side_effect=_no_op_health)
+@patch("app.api.deploy.validate_repo", return_value=VALID_COMPOSE_REPO)
+def test_deploy_self_hosted_llm_launches_instance_and_returns_its_ip(_mock_validate, _mock_health) -> None:
+    _bootstrap_moto_account()
+    _response, status = _deploy_and_wait(SELF_HOSTED_LLM_PAYLOAD)
+    assert status["error"] is None
+    assert status["result"]["app_url"].startswith("http://")
+    assert status["result"]["app_url"].endswith(":8001")
+
+
+@mock_aws
+@patch("app.api.deploy.validate_repo", return_value=ValidateRepoResponse(valid=False, error="No entry point found."))
+def test_deploy_rejects_invalid_repo_before_touching_aws(_mock_validate) -> None:
+    response = client.post("/deploy", json=EXTERNAL_LLM_PAYLOAD)
+    assert response.status_code == 400
+    assert "No entry point found" in response.json()["detail"]
+
+
+@mock_aws
+@patch("app.api.deploy.validate_repo", return_value=VALID_COMPOSE_REPO)
+def test_deploy_rolls_back_app_instance_when_its_own_health_check_never_passes(_mock_validate) -> None:
+    """The app instance launched fine but never actually came up healthy — an
+    unhealthy, orphaned instance shouldn't be left running any more than a
+    fully-orphaned one would; the feedback stack should never even start."""
+    _bootstrap_moto_account()
+
+    with patch(
+        "app.api.deploy.wait_for_port_health",
+        side_effect=HealthCheckTimeoutError("did not respond on port 8001 within 300s"),
+    ):
+        response = client.post("/deploy", json=EXTERNAL_LLM_PAYLOAD)
+        status = _poll_until_terminal(response.json()["deployment_id"])
+
+    assert status["result"] is None
+    assert "did not respond on port 8001" in status["error"]
+    assert status["steps"]["app_health"] == "error"
+    assert status["steps"]["feedback_compute"] == "pending"  # never even attempted
+    assert status["steps"]["feedback_health"] == "pending"
+
+    session = boto3.Session(
+        aws_access_key_id="test", aws_secret_access_key="test", region_name=settings.aws_default_region
+    )
+    instances = session.client("ec2").describe_instances()["Reservations"]
+    states = [i["State"]["Name"] for r in instances for i in r["Instances"]]
+    assert states == ["shutting-down"] or states == ["terminated"]  # only the app instance was ever launched
+
+
+@mock_aws
+@patch("app.api.deploy.validate_repo", return_value=VALID_COMPOSE_REPO)
+def test_deploy_rolls_back_app_instance_when_feedback_stack_fails(_mock_validate) -> None:
+    """The core rollback policy: the app instance succeeding on its own isn't
+    a complete deployment — a failure anywhere on the feedback side must
+    terminate it too, rather than leaving a partial, orphaned deployment."""
+    _bootstrap_moto_account()
+
+    def health_side_effect(_public_ip, port, **_kwargs):
+        if port == settings.feedback_form_port:
+            raise HealthCheckTimeoutError("did not respond on port 8002 within 300s")
+        return None
+
+    with patch("app.api.deploy.wait_for_port_health", side_effect=health_side_effect):
+        response = client.post("/deploy", json=EXTERNAL_LLM_PAYLOAD)
+        status = _poll_until_terminal(response.json()["deployment_id"])
+
+    assert status["result"] is None
+    assert "did not respond on port 8002" in status["error"]
+    assert status["steps"]["app_compute"] == "done"
+    assert status["steps"]["app_health"] == "done"
+    assert status["steps"]["feedback_health"] == "error"
+
+    # The app instance succeeded on its own, but must have been rolled back too.
+    session = boto3.Session(
+        aws_access_key_id="test", aws_secret_access_key="test", region_name=settings.aws_default_region
+    )
+    instances = session.client("ec2").describe_instances()["Reservations"]
+    states = [i["State"]["Name"] for r in instances for i in r["Instances"]]
+    assert all(s in ("shutting-down", "terminated") for s in states)
+    assert len(states) == 2  # both the app instance and the feedback instance were launched, then rolled back
+
+
+@patch("app.api.deploy.validate_repo", return_value=VALID_COMPOSE_REPO)
+def test_deploy_provisions_sequentially(_mock_validate) -> None:
+    """Regression test for the sequential-launch decision: the app instance
+    must be fully launched and healthy before the feedback stack's own
+    RunInstances call ever fires — not the other way around, and not
+    overlapping. Pure stubs, no moto — real AWS calls (even mocked ones) are
+    an ordering confound this test shouldn't depend on; this tests deploy()'s
+    own orchestration, not provisioning correctness."""
+    call_order = []
+
+    def record_app_launch(*_args, **_kwargs):
+        call_order.append("app_compute")
+        return {"instance_id": "i-app", "public_ip": "1.1.1.1"}
+
+    def record_health(_public_ip, port, **_kwargs):
+        call_order.append("app_health" if port == settings.app_port else "feedback_health")
+
+    def record_feedback_launch(*_args, **_kwargs):
+        call_order.append("feedback_compute")
+        return {"instance_id": "i-feedback", "public_ip": "2.2.2.2", "dashboard_token": "tok"}
+
+    with (
+        patch("app.api.deploy.launch_app_instance", side_effect=record_app_launch),
+        patch("app.api.deploy.wait_for_port_health", side_effect=record_health),
+        patch("app.api.deploy.launch_feedback_stack", side_effect=record_feedback_launch),
+    ):
+        response = client.post("/deploy", json=EXTERNAL_LLM_PAYLOAD)
+        status = _poll_until_terminal(response.json()["deployment_id"])
+
+    assert status["result"] is not None
+    assert call_order == ["app_compute", "app_health", "feedback_compute", "feedback_health", "feedback_health"]
+
+
+@patch("app.api.deploy.get_session", side_effect=NoCredentialsError("No AWS credentials cached yet and none were provided."))
+@patch("app.api.deploy.validate_repo", return_value=VALID_COMPOSE_REPO)
+def test_deploy_returns_401_with_cors_headers_when_no_credentials(_mock_validate, _mock_get_session) -> None:
+    response = client.post("/deploy", json=EXTERNAL_LLM_PAYLOAD, headers=CORS_ORIGIN_HEADERS)
+    assert response.status_code == 401
+    assert "No AWS credentials cached" in response.json()["detail"]
+    # The actual bug this guards against: an *unhandled* exception's 500 response
+    # skips CORSMiddleware entirely, the browser blocks it, and fetch() throws a
+    # generic network error — which the frontend then shows as "could not reach
+    # the backend," hiding whatever the real problem was. A handled HTTPException
+    # must not have this problem. Only get_session()'s own check can raise this —
+    # it never touches AWS, so it's still synchronous, unlike every AWS-side
+    # failure below, which is now reported through polling instead.
+    assert response.headers.get("access-control-allow-origin") == "http://localhost:5173"
+
+
+@mock_aws
+@patch(
+    "app.api.deploy.launch_app_instance",
+    side_effect=ClientError(
+        {"Error": {"Code": "UnrecognizedClientException", "Message": "The security token included in the request is invalid."}},
+        "PutParameter",
+    ),
+)
+@patch("app.api.deploy.validate_repo", return_value=VALID_COMPOSE_REPO)
+def test_deploy_reports_it_when_aws_rejects_credentials(_mock_validate, _mock_launch) -> None:
+    _bootstrap_moto_account()
+    response = client.post("/deploy", json=EXTERNAL_LLM_PAYLOAD)
+    assert response.status_code == 202
+    status = _poll_until_terminal(response.json()["deployment_id"])
+    assert "security token" in status["error"]
+    assert status["steps"]["app_compute"] == "error"
+
+
+@mock_aws
+@patch(
+    "app.api.deploy.launch_app_instance",
+    side_effect=ClientError(
+        {
+            "Error": {
+                "Code": "InvalidParameterValue",
+                "Message": "Value (agent-feedback-deploy-instance-role) for parameter "
+                "iamInstanceProfile.name is invalid. Invalid IAM Instance Profile name",
+            }
+        },
+        "RunInstances",
+    ),
+)
+@patch("app.api.deploy.validate_repo", return_value=VALID_COMPOSE_REPO)
+def test_deploy_does_not_blame_credentials_for_unrelated_aws_errors(_mock_validate, _mock_launch) -> None:
+    # A bad/missing instance profile is a setup problem, not a bad access key —
+    # mislabeling it "credentials" (as this used to) sends the user chasing the
+    # wrong fix.
+    _bootstrap_moto_account()
+    response = client.post("/deploy", json=EXTERNAL_LLM_PAYLOAD)
+    assert response.status_code == 202
+    status = _poll_until_terminal(response.json()["deployment_id"])
+    assert "credentials" not in status["error"].lower()
+    assert "Invalid IAM Instance Profile name" in status["error"]
+
+
+@mock_aws
+@patch("app.api.deploy.launch_app_instance", side_effect=Ec2LaunchError("No default VPC found in this account/region."))
+@patch("app.api.deploy.validate_repo", return_value=VALID_COMPOSE_REPO)
+def test_deploy_reports_it_when_provisioning_fails(_mock_validate, _mock_launch) -> None:
+    _bootstrap_moto_account()
+    response = client.post("/deploy", json=EXTERNAL_LLM_PAYLOAD)
+    assert response.status_code == 202
+    status = _poll_until_terminal(response.json()["deployment_id"])
+    assert "No default VPC" in status["error"]
+    assert status["steps"]["app_compute"] == "error"
+
+
+def test_deploy_status_returns_404_for_unknown_deployment_id() -> None:
+    response = client.get("/deploy/does-not-exist/status")
+    assert response.status_code == 404
+
+
+def test_deploy_external_llm_missing_api_key_rejected() -> None:
+    payload = {**EXTERNAL_LLM_PAYLOAD, "api_key": None}
+    response = client.post("/deploy", json=payload)
+    assert response.status_code == 422
+
+
+def test_deploy_external_llm_missing_provider_rejected() -> None:
+    payload = {**EXTERNAL_LLM_PAYLOAD, "llm_provider": None}
+    response = client.post("/deploy", json=payload)
+    assert response.status_code == 422
+
+
+def test_deploy_self_hosted_llm_rejects_cpu_instance_type() -> None:
+    payload = {**SELF_HOSTED_LLM_PAYLOAD, "instance_type": "t3.small"}
+    response = client.post("/deploy", json=payload)
+    assert response.status_code == 422
+
+
+def test_deploy_self_hosted_llm_rejects_api_key_present() -> None:
+    payload = {**SELF_HOSTED_LLM_PAYLOAD, "llm_provider": "openai", "api_key": "sk-test"}
+    response = client.post("/deploy", json=payload)
+    assert response.status_code == 422
+
+
+def test_deploy_external_llm_rejects_gpu_instance_type() -> None:
+    payload = {**EXTERNAL_LLM_PAYLOAD, "instance_type": "g4dn.xlarge"}
+    response = client.post("/deploy", json=payload)
+    assert response.status_code == 422
+
+
+def test_deploy_rejects_invalid_ebs_size() -> None:
+    payload = {**EXTERNAL_LLM_PAYLOAD, "ebs_size_gb": 999}
+    response = client.post("/deploy", json=payload)
+    assert response.status_code == 422
+
+
+def test_deploy_rejects_missing_repo_url() -> None:
+    payload = {**EXTERNAL_LLM_PAYLOAD, "repo_url": ""}
+    response = client.post("/deploy", json=payload)
+    assert response.status_code == 422
+
+
+@mock_aws
+def test_terminate_uses_cached_credentials_no_repaste_needed() -> None:
+    session = boto3.Session(
+        aws_access_key_id="test", aws_secret_access_key="test", region_name=settings.aws_default_region
+    )
+    create_instance_profile(session)
+    # Seed the local credential cache exactly as /deploy would have on first use.
+    get_session("AKIA_TEST", "shh", region=settings.aws_default_region)
+
+    from app.aws import ec2 as ec2_module
+
+    launch_result = ec2_module.launch_app_instance(
+        session,
+        deployment_id="dep000000001",
+        repo_url="https://github.com/kaushik/agent",
+        entry_point="compose",
+        instance_type="t3.small",
+        ebs_size_gb=20,
+        secrets={},
+    )
+
+    response = client.post(
+        "/terminate", json={"instance_id": launch_result["instance_id"], "region": settings.aws_default_region}
+    )
+    assert response.status_code == 200
+    assert response.json() == {"status": "terminating"}
+
+    instance = session.client("ec2").describe_instances(InstanceIds=[launch_result["instance_id"]])[
+        "Reservations"
+    ][0]["Instances"][0]
+    assert instance["State"]["Name"] in ("shutting-down", "terminated")
+
+
+def test_terminate_returns_401_when_no_credentials_cached() -> None:
+    response = client.post("/terminate", json={"instance_id": "i-0123456789abcdef0", "region": "us-east-1"})
+    assert response.status_code == 401
+    assert "No AWS credentials cached" in response.json()["detail"]
+
+
+@patch(
+    "app.api.deploy.terminate_instance",
+    side_effect=ClientError(
+        {"Error": {"Code": "UnrecognizedClientException", "Message": "The security token included in the request is invalid."}},
+        "TerminateInstances",
+    ),
+)
+@patch("app.api.deploy.get_session")
+def test_terminate_returns_401_with_cors_headers_when_aws_rejects_credentials(_mock_get_session, _mock_terminate) -> None:
+    response = client.post(
+        "/terminate",
+        json={"instance_id": "i-0123456789abcdef0", "region": "us-east-1"},
+        headers=CORS_ORIGIN_HEADERS,
+    )
+    assert response.status_code == 401
+    assert "security token" in response.json()["detail"]
+    assert response.headers.get("access-control-allow-origin") == "http://localhost:5173"
+
+
+@patch(
+    "app.api.deploy.terminate_instance",
+    side_effect=ClientError(
+        {"Error": {"Code": "InvalidInstanceID.NotFound", "Message": "The instance ID does not exist"}},
+        "TerminateInstances",
+    ),
+)
+@patch("app.api.deploy.get_session")
+def test_terminate_does_not_blame_credentials_for_unrelated_aws_errors(_mock_get_session, _mock_terminate) -> None:
+    response = client.post(
+        "/terminate",
+        json={"instance_id": "i-doesnotexist", "region": "us-east-1"},
+        headers=CORS_ORIGIN_HEADERS,
+    )
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "credentials" not in detail.lower()
+    assert "does not exist" in detail
+    assert response.headers.get("access-control-allow-origin") == "http://localhost:5173"
+
+
+def test_terminate_rejects_missing_instance_id() -> None:
+    response = client.post("/terminate", json={"region": "us-east-1"})
+    assert response.status_code == 422
+
+
+def test_terminate_rejects_invalid_region() -> None:
+    response = client.post("/terminate", json={"instance_id": "i-0123456789abcdef0", "region": "mars-1"})
+    assert response.status_code == 422

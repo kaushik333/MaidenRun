@@ -12,6 +12,12 @@
       "Effect": "Allow",
       "Action": "kms:Decrypt",
       "Resource": "arn:aws:kms:*:*:key/alias/aws/ssm"
+    },
+    {
+      "Sid": "ReadOwnFeedbackBundle",
+      "Effect": "Allow",
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::agent-feedback-deploy-*/feedback-stack-bundles/*"
     }
   ]
 }

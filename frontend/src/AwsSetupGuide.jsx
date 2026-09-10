@@ -107,6 +107,11 @@ export default function AwsSetupGuide() {
                 Five steps, once, in the AWS account you're deploying into. Full reference version:{" "}
                 <code>infra/README.md</code>.
               </p>
+              <p className="setup-modal-intro">
+                Already done this before? These policies can grow as new features are added — if AWS starts
+                rejecting a call with <em>"is not authorized to perform..."</em>, re-paste the (always current)
+                JSON below over what you attached previously.
+              </p>
 
               <ol className="setup-steps">
                 {STATIC_STEPS.map((step, i) => (

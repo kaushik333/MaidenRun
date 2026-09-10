@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import DeployFeedbackStack from "./DeployFeedbackStack.jsx";
 import DeployForm from "./DeployForm.jsx";
 import { BACKEND_URL } from "./config";
 import "./index.css";
@@ -43,6 +44,7 @@ export default function App() {
           </span>
         </header>
         <DeployForm />
+        <DeployFeedbackStack />
       </div>
     </main>
   );

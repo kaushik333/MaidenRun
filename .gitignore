@@ -10,3 +10,6 @@ logs/
 # node
 **/node_modules/
 **/dist/
+
+# local copy of feedback-stack/feedback-questions.example.json for standalone dev
+feedback-stack/feedback-questions.json

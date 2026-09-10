@@ -1,21 +1,15 @@
 import threading
 import uuid
-from typing import Literal, NoReturn
+from typing import Literal
 
 from botocore.exceptions import ClientError
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, Field, model_validator
 
 from app.aws.credentials import NoCredentialsError, get_session
-from app.aws.ec2 import (
-    PROVIDER_ENV_VARS,
-    Ec2LaunchError,
-    HealthCheckTimeoutError,
-    launch_app_instance,
-    terminate_instance,
-    wait_for_port_health,
-)
+from app.aws.ec2 import PROVIDER_ENV_VARS, launch_app_instance, terminate_instance, wait_for_port_health
 from app.core.config import settings
+from app.core.errors import classify_error, reraise_as_http_error
 from app.core.logging import logger
 from app.validation.validator import validate_repo
 
@@ -36,18 +30,6 @@ AWS_REGIONS = (
     "ap-northeast-1",
     "me-central-1",
 )
-
-# AWS error codes that actually mean "this access key/secret is wrong" — not
-# every ClientError is a credentials problem (e.g. a bad instance profile
-# name isn't), so only these get the "AWS rejected these credentials" framing.
-CREDENTIAL_ERROR_CODES = {
-    "UnrecognizedClientException",
-    "InvalidClientTokenId",
-    "AuthFailure",
-    "SignatureDoesNotMatch",
-    "AccessDenied",
-    "AccessDeniedException",
-}
 
 router = APIRouter()
 
@@ -132,44 +114,6 @@ class TerminateRequest(BaseModel):
 
 class TerminateResponse(BaseModel):
     status: str
-
-
-def _classify_error(exc: Exception) -> tuple[int, str]:
-    """Maps any exception from a provisioning step to (status_code, detail).
-
-    The status_code half is only meaningful for /terminate's synchronous
-    error responses now — a background deployment's failure is reported via
-    the polled JSON body, not an HTTP error status, but the same message
-    classification still applies: same distinction throughout between 'your
-    credentials are wrong' and 'AWS rejected this specific request' for some
-    other reason (see CREDENTIAL_ERROR_CODES). Anything not otherwise
-    recognized still gets classified rather than left to propagate
-    unhandled — an unhandled exception's response skips CORSMiddleware
-    entirely and the browser reports it as a bare network failure, hiding
-    whatever actually went wrong.
-    """
-    if isinstance(exc, NoCredentialsError):
-        return 401, str(exc)
-    if isinstance(exc, ClientError):
-        code = exc.response["Error"]["Code"]
-        message = exc.response["Error"]["Message"]
-        if code in CREDENTIAL_ERROR_CODES:
-            return 401, f"AWS rejected these credentials: {message}"
-        return 400, f"AWS rejected the request: {message}"
-    # Checked before the (broader) Ec2LaunchError below, since it's a subclass:
-    # provisioned fine, just never answered — a narrower, 504-shaped problem.
-    if isinstance(exc, HealthCheckTimeoutError):
-        return 504, str(exc)
-    if isinstance(exc, Ec2LaunchError):
-        return 502, str(exc)
-    return 500, str(exc)
-
-
-def _reraise_as_http_error(exc: ClientError) -> NoReturn:
-    """Thin wrapper for the single-exception call sites (/terminate)."""
-    logger.exception("AWS rejected the request")
-    status_code, detail = _classify_error(exc)
-    raise HTTPException(status_code=status_code, detail=detail) from exc
 
 
 # ---- deployment status store ----
@@ -265,7 +209,7 @@ def _run_deployment(
                     f" (could not confirm rollback of {app_result['instance_id']} — check the AWS console)"
                 )
 
-        _, message = _classify_error(exc)
+        _, message = classify_error(exc)
         with _deployments_lock:
             _deployments[deployment_id].error = f"{message}{rollback_note}"
 
@@ -315,6 +259,6 @@ def terminate(request: TerminateRequest) -> TerminateResponse:
     except NoCredentialsError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     except ClientError as exc:
-        _reraise_as_http_error(exc)
+        reraise_as_http_error(exc)
 
     return TerminateResponse(status="terminating")

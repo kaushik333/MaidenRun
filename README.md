@@ -4,13 +4,15 @@ Local control plane for deploying an AI agent repo to AWS with reviewer
 feedback collection built in. See [IDEA.md](../IDEA.md) for the full design
 and [plan.md](../plan.md) for the phased implementation plan.
 
-> Status: Phases 0–6 complete — repo validation, AWS credential handling,
-> and app EC2 provisioning (background task + live polling, rollback on
-> failure) are all functional via **Deploy**. Phases 7–8 (a separate
-> **Deploy feedback stack** action, plus the dynamic questionnaire) are
-> partway done: the feedback-form app itself works standalone (see below)
-> but isn't yet wired up to a live AWS deploy path. Phases 9+ (dashboard,
-> cost tracking, idle-timeout teardown) are not yet built.
+> Status: Phases 0–7 complete — repo validation, AWS credential handling,
+> app EC2 provisioning, and feedback-stack EC2 provisioning (each its own
+> background task + live polling, each with rollback on failure) are all
+> functional via **Deploy** and the separate **Deploy feedback stack**
+> action. Phase 8 (the dynamic questionnaire's JSON schema, type-based
+> rendering, and Postgres storage) is not yet built — today's uploaded
+> questionnaire is bundled and shipped, but the feedback-form app still
+> renders its own built-in default until that phase lands. Phases 9+
+> (dashboard, cost tracking, idle-timeout teardown) are not yet built.
 
 ## Local dev
 
@@ -45,6 +47,7 @@ see [`feedback-stack/`](feedback-stack/). To run it standalone:
 ```bash
 cd feedback-stack
 cp .env.example .env
+cp feedback-questions.example.json feedback-questions.json
 docker compose up --build
 ```
 

@@ -20,12 +20,15 @@ services:
     environment:
       - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/feedback
       - DEPLOYMENT_ID=${DEPLOYMENT_ID}
-      - FEEDBACK_QUESTIONS_PATH=/data/feedback-questions.yaml
+      - FEEDBACK_QUESTIONS_PATH=/data/feedback-questions.json
     volumes:
-      # Written by the EC2 boot script from the deployed agent repo's own
-      # feedback-questions.yaml, if it had one (see backend/app/aws/feedback_stack.py
-      # in the control plane) — always exists by the time this runs, even if empty.
-      - /opt/feedback-questions.yaml:/data/feedback-questions.yaml:ro
+      # feedback-questions.json sits at the bundle root alongside this file —
+      # the control plane tars it in next to docker-compose.yml (see
+      # backend/app/aws/s3_bundle.py) before shipping the whole bundle to the
+      # instance, so this relative path resolves the same way there as it
+      # does here. For local/standalone runs: `cp feedback-questions.example.json
+      # feedback-questions.json` first (gitignored, same pattern as .env).
+      - ./feedback-questions.json:/data/feedback-questions.json:ro
     depends_on:
       - postgres
 

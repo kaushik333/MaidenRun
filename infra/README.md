@@ -9,9 +9,11 @@ The platform never provisions anything with a broad or admin-level AWS
 credential. Instead, you create a dedicated IAM user in your own account
 whose *only* permissions are the ones in [`iam-policy.json`](iam-policy.json)
 — EC2, security group, and Systems Manager Parameter Store provisioning,
-nothing else. (Postgres for the feedback stack runs on EC2 too, not RDS,
-so there's no separate database permission block.) Do this once, in the
-AWS account you want to deploy into.
+plus a narrowly-scoped S3 bucket used only to relay the feedback stack's
+own code and your uploaded questionnaire onto its instance (see "Deploy
+feedback stack"). (Postgres for the feedback stack runs on EC2 too, not
+RDS, so there's no separate database permission block.) Do this once, in
+the AWS account you want to deploy into.
 
 1. **Create an IAM user** (IAM console → Users → Create user). It doesn't
    need console access — programmatic access only.
@@ -20,6 +22,18 @@ AWS account you want to deploy into.
    (Add permissions → Create inline policy → paste the JSON). This is the
    only thing the user can ever do — there's no broader credential
    upstream of it to worry about.
+
+   **Already did this before?** This policy grows as the platform gains
+   features (e.g. S3 permissions were added for "Deploy feedback stack") —
+   there's no migration or version check, so an IAM user set up against an
+   older version of this file will start failing AWS calls with an
+   `is not authorized to perform: ...` error the moment it needs a
+   permission that didn't exist yet when you set it up. If you hit that,
+   re-open the same inline policy on your IAM user and replace its
+   contents with the current `iam-policy.json` (or the in-app "AWS
+   one-time setup" guide, which always reads it fresh) — same for
+   [`instance-role-policy.json`](instance-role-policy.json) if the error
+   instead comes from the instance role.
 
 3. **Create a second IAM role for the app instance itself** — a
    *different* identity from the user above, one that AWS attaches to

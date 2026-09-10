@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.compatibility_report import router as compatibility_report_router
 from app.api.deploy import router as deploy_router
+from app.api.deploy_feedback import router as deploy_feedback_router
 from app.api.health import router as health_router
 from app.api.setup_info import router as setup_info_router
 from app.api.validate_repo import router as validate_repo_router
@@ -29,6 +30,7 @@ app.add_middleware(
 
 app.include_router(health_router)
 app.include_router(deploy_router)
+app.include_router(deploy_feedback_router)
 app.include_router(validate_repo_router)
 app.include_router(compatibility_report_router)
 app.include_router(setup_info_router)

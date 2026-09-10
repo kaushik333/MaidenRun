@@ -15,9 +15,9 @@ class Settings(BaseSettings):
     # tags every submitted row; set by the EC2 boot script per deployment
     deployment_id: str = "local"
 
-    # written by the EC2 boot script from the deployed agent repo's own
-    # feedback-questions.yaml, if it had one — see questions.py
-    feedback_questions_path: str = "/opt/feedback-questions.yaml"
+    # bundled in at the root of the feedback-stack S3 bundle, alongside
+    # docker-compose.yml — see questions.py and ../../backend/app/aws/s3_bundle.py
+    feedback_questions_path: str = "/opt/feedback-stack/feedback-questions.json"
 
     log_level: str = "INFO"
 

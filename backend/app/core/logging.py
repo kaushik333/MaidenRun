@@ -12,7 +12,7 @@ def setup_logging() -> logging.Logger:
     run_dir = Path(settings.log_dir) / settings.user_id / RUN_ID
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    logger = logging.getLogger("agent_feedback_deploy")
+    logger = logging.getLogger("agentdock")
     logger.setLevel(settings.log_level)
     fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
 

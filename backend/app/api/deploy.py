@@ -1,5 +1,6 @@
 import threading
 import uuid
+from datetime import datetime, timezone
 from typing import Literal
 
 from botocore.exceptions import ClientError
@@ -8,6 +9,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from app.aws.credentials import NoCredentialsError, get_session
 from app.aws.ec2 import PROVIDER_ENV_VARS, launch_app_instance, terminate_instance, wait_for_port_health
+from app.aws.pricing import EC2_HOURLY_RATES, estimate_ec2_cost
 from app.core.config import settings
 from app.core.errors import classify_error, reraise_as_http_error
 from app.core.logging import logger
@@ -88,10 +90,20 @@ class DeployResult(BaseModel):
 
     app_url: str
     app_instance_id: str
+    instance_type: str
+    ebs_size_gb: int
+    launched_at: datetime
 
 
 class DeployAcceptedResponse(BaseModel):
     deployment_id: str
+
+
+class CostEstimate(BaseModel):
+    estimated_usd: float
+    hourly_rate: float
+    instance_type: str
+    launched_at: datetime
 
 
 StepStatus = Literal["pending", "active", "done", "error"]
@@ -170,6 +182,7 @@ def _run_deployment(
             secrets=app_secrets,
             instance_name=request.instance_name,
         )
+        launched_at = datetime.now(timezone.utc)
         _set_step(deployment_id, "app_compute", "done")
 
         _set_step(deployment_id, "app_health", "active")
@@ -182,6 +195,9 @@ def _run_deployment(
             _deployments[deployment_id].result = DeployResult(
                 app_url=f"http://{app_result['public_ip']}:{settings.app_port}",
                 app_instance_id=app_result["instance_id"],
+                instance_type=request.instance_type,
+                ebs_size_gb=request.ebs_size_gb,
+                launched_at=launched_at,
             )
     except Exception as exc:  # deliberately broad — terminal handler for the whole background flow
         logger.exception("deployment %s failed", deployment_id)
@@ -246,6 +262,20 @@ def deploy_status(deployment_id: str) -> DeploymentStatus:
     if status is None:
         raise HTTPException(status_code=404, detail="Unknown deployment_id")
     return status
+
+
+@router.get("/deploy/{deployment_id}/cost-estimate", response_model=CostEstimate)
+def deploy_cost_estimate(deployment_id: str) -> CostEstimate:
+    status = _read_status(deployment_id)
+    if status is None or status.result is None:
+        raise HTTPException(status_code=404, detail="Unknown or not-yet-complete deployment_id")
+    result = status.result
+    return CostEstimate(
+        estimated_usd=estimate_ec2_cost(result.instance_type, result.ebs_size_gb, result.launched_at),
+        hourly_rate=EC2_HOURLY_RATES.get(result.instance_type, 0.0),
+        instance_type=result.instance_type,
+        launched_at=result.launched_at,
+    )
 
 
 @router.post("/terminate", response_model=TerminateResponse)

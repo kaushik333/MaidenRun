@@ -12,6 +12,7 @@ DATABASE_URL = f"postgresql://postgres:{TEST_DB_PASSWORD}@localhost:{TEST_DB_POR
 # settings can see this in time.
 os.environ["DATABASE_URL"] = DATABASE_URL
 os.environ.setdefault("DEPLOYMENT_ID", "test-deployment")
+os.environ.setdefault("DASHBOARD_TOKEN", "test-dashboard-token")
 
 
 def _wait_until_ready(deadline: float) -> None:

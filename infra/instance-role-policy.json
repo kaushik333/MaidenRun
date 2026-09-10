@@ -5,7 +5,7 @@
       "Sid": "ReadOwnSecrets",
       "Effect": "Allow",
       "Action": "ssm:GetParameter",
-      "Resource": "arn:aws:ssm:*:*:parameter/agent-feedback-deploy/*"
+      "Resource": "arn:aws:ssm:*:*:parameter/agentdock/*"
     },
     {
       "Sid": "DecryptOwnSecrets",
@@ -17,7 +17,7 @@
       "Sid": "ReadOwnFeedbackBundle",
       "Effect": "Allow",
       "Action": "s3:GetObject",
-      "Resource": "arn:aws:s3:::agent-feedback-deploy-*/feedback-stack-bundles/*"
+      "Resource": "arn:aws:s3:::agentdock-*/feedback-stack-bundles/*"
     }
   ]
 }

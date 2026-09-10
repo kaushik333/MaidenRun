@@ -1,7 +1,7 @@
 [project]
-name = "agent-feedback-deploy-backend"
+name = "agentdock-backend"
 version = "0.1.0"
-description = "Control plane backend for Agent Feedback Deploy"
+description = "Control plane backend for AgentDock"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",

@@ -155,7 +155,7 @@ export default function DeployForm() {
   // task regardless of whether any particular poll succeeds, so a dropped
   // poll just means the UI is stale for one more tick, not that the
   // deployment itself stalls.
-  function pollDeployStatus(deploymentId, generation, appInstanceName, ebsSizeGb, instanceType, region) {
+  function pollDeployStatus(deploymentId, generation, appInstanceName, region) {
     if (pollGenerationRef.current !== generation) return;
 
     fetch(`${BACKEND_URL}/deploy/${deploymentId}/status`)
@@ -168,15 +168,14 @@ export default function DeployForm() {
         }
 
         if (data.result) {
-          // Snapshot the region/name/instance-type actually used for *this*
+          // Snapshot the region/name/deployment id actually used for *this*
           // deploy onto the result — reading them live off `form` later
           // would drift if the user keeps editing the form afterward.
           setResult({
             ...data.result,
             region,
             instanceName: appInstanceName,
-            instanceType,
-            ebsSizeGb,
+            deploymentId,
           });
           setDeployCount((c) => c + 1);
           setSubmitting(false);
@@ -191,7 +190,7 @@ export default function DeployForm() {
         }
 
         setTimeout(
-          () => pollDeployStatus(deploymentId, generation, appInstanceName, ebsSizeGb, instanceType, region),
+          () => pollDeployStatus(deploymentId, generation, appInstanceName, region),
           POLL_INTERVAL_MS
         );
       })
@@ -200,7 +199,7 @@ export default function DeployForm() {
         // failure. Just try again; the background task on the server side
         // is unaffected either way.
         setTimeout(
-          () => pollDeployStatus(deploymentId, generation, appInstanceName, ebsSizeGb, instanceType, region),
+          () => pollDeployStatus(deploymentId, generation, appInstanceName, region),
           POLL_INTERVAL_MS
         );
       });
@@ -275,14 +274,7 @@ export default function DeployForm() {
     setStepStatus("validate", "done");
     setStepStatus("ports", "done");
     setStepStatus("aws_creds", "done");
-    pollDeployStatus(
-      data.deployment_id,
-      generation,
-      app_instance_name.trim() || null,
-      form.ebs_size_gb,
-      form.instance_type,
-      form.aws.region
-    );
+    pollDeployStatus(data.deployment_id, generation, app_instance_name.trim() || null, form.aws.region);
   }
 
   return (
@@ -591,8 +583,7 @@ export default function DeployForm() {
         {result && (
           <CostMonitor
             key={deployCount}
-            instanceType={result.instanceType}
-            ebsSizeGb={result.ebsSizeGb}
+            costEstimateUrl={`/deploy/${result.deploymentId}/cost-estimate`}
             instanceId={result.app_instance_id}
             instanceName={result.instanceName}
             region={result.region}

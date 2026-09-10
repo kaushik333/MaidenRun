@@ -1,18 +1,16 @@
-# Agent Feedback Deploy
+# AgentDock
 
 Local control plane for deploying an AI agent repo to AWS with reviewer
 feedback collection built in. See [IDEA.md](../IDEA.md) for the full design
 and [plan.md](../plan.md) for the phased implementation plan.
 
-> Status: Phases 0–7 complete — repo validation, AWS credential handling,
-> app EC2 provisioning, and feedback-stack EC2 provisioning (each its own
-> background task + live polling, each with rollback on failure) are all
-> functional via **Deploy** and the separate **Deploy feedback stack**
-> action. Phase 8 (the dynamic questionnaire's JSON schema, type-based
-> rendering, and Postgres storage) is not yet built — today's uploaded
-> questionnaire is bundled and shipped, but the feedback-form app still
-> renders its own built-in default until that phase lands. Phases 9+
-> (dashboard, cost tracking, idle-timeout teardown) are not yet built.
+> Status: Phases 0–10 complete — repo validation, AWS credential handling,
+> app EC2 provisioning, feedback-stack EC2 provisioning, the dynamic
+> questionnaire, the token-gated feedback dashboard (`:8003`), and a live
+> AWS cost-estimate widget (EC2+EBS for each instance, plus S3 for the
+> feedback-stack's bundle-relay bucket) are all functional via **Deploy**
+> and the separate **Deploy feedback stack** action. Phase 11+
+> (idle-timeout teardown, security hardening) is not yet built.
 
 ## Local dev
 
@@ -52,7 +50,7 @@ docker compose up --build
 ```
 
 - Feedback form: http://localhost:8002
-- Dashboard (placeholder until Phase 9): http://localhost:8003
+- Dashboard: http://localhost:8003/?token=local-dev-token (matches `DASHBOARD_TOKEN` in `.env.example`)
 
 Full architecture, directory layout, and component walkthrough will be
 added in Phase 13 once the system is functionally complete.

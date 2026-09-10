@@ -1,18 +1,7 @@
 import { useEffect, useState } from "react";
 import { BACKEND_URL } from "./config";
 
-// Illustrative on-demand hourly rates, matching IDEA.md's EC2 Instance Options
-// table. Mocked for the deploying user to watch spend accrue — real AWS cost
-// tracking wires in once provisioning (Phase 4-6) is built.
-const INSTANCE_HOURLY_RATES = {
-  "t3.small": 0.02,
-  "t3.medium": 0.04,
-  "m5.xlarge": 0.19,
-  "g4dn.xlarge": 0.53,
-  "g5.xlarge": 1.01,
-};
-
-const EBS_HOURLY_RATE_PER_GB = 0.08 / 730; // ~$0.08/GB-month (gp3), converted to hourly
+const POLL_INTERVAL_MS = 5000;
 
 function formatElapsed(seconds) {
   const h = Math.floor(seconds / 3600);
@@ -21,9 +10,15 @@ function formatElapsed(seconds) {
   return [h, m, s].map((n) => String(n).padStart(2, "0")).join(":");
 }
 
-export default function CostMonitor({ instanceType, ebsSizeGb, instanceId, instanceName, region }) {
+// Polls a real cost-estimate endpoint (GET /deploy/{id}/cost-estimate or
+// GET /deploy-feedback/{id}/cost-estimate) rather than guessing from a
+// client-side clock — figures are computed server-side from the real AWS
+// launch time. Shared by both the app deploy and feedback-stack deploy
+// cards; costEstimateUrl's response shape (s3_estimated_usd present or not)
+// decides whether the S3 line renders.
+export default function CostMonitor({ costEstimateUrl, instanceId, instanceName, region }) {
+  const [estimate, setEstimate] = useState(null);
   const [now, setNow] = useState(() => Date.now());
-  const [launchedAt] = useState(() => Date.now());
   const [terminated, setTerminated] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [terminating, setTerminating] = useState(false);
@@ -31,15 +26,27 @@ export default function CostMonitor({ instanceType, ebsSizeGb, instanceId, insta
 
   useEffect(() => {
     if (terminated) return undefined;
-    const interval = setInterval(() => setNow(Date.now()), 3000);
+    let cancelled = false;
+    const fetchEstimate = () =>
+      fetch(`${BACKEND_URL}${costEstimateUrl}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (!cancelled && data) setEstimate(data);
+        })
+        .catch(() => {});
+    fetchEstimate();
+    const interval = setInterval(fetchEstimate, POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [costEstimateUrl, terminated]);
+
+  useEffect(() => {
+    if (terminated) return undefined;
+    const interval = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(interval);
   }, [terminated]);
-
-  const elapsedSeconds = Math.max(0, (now - launchedAt) / 1000);
-  const elapsedHours = elapsedSeconds / 3600;
-  const hourlyRate = INSTANCE_HOURLY_RATES[instanceType] ?? 0;
-  const totalCost = elapsedHours * hourlyRate + ebsSizeGb * EBS_HOURLY_RATE_PER_GB * elapsedHours;
-  const displayName = instanceName || instanceId;
 
   async function confirmTerminate() {
     setTerminating(true);
@@ -79,6 +86,13 @@ export default function CostMonitor({ instanceType, ebsSizeGb, instanceId, insta
     setTerminating(false);
   }
 
+  if (!estimate) return null;
+
+  const elapsedSeconds = Math.max(0, (now - new Date(estimate.launched_at).getTime()) / 1000);
+  const hasS3 = estimate.s3_estimated_usd !== undefined;
+  const ec2Cost = estimate.ec2_estimated_usd ?? estimate.estimated_usd;
+  const displayName = instanceName || instanceId;
+
   return (
     <div className="cost-monitor" data-status={terminated ? "terminated" : "running"}>
       <div className="cost-monitor-header">
@@ -98,14 +112,21 @@ export default function CostMonitor({ instanceType, ebsSizeGb, instanceId, insta
           </span>
         </div>
         <div className="cost-stat">
-          <span className="cost-stat-label">Estimated cost</span>
-          <span className="cost-stat-value cost-stat-value--highlight">${totalCost.toFixed(4)}</span>
+          <span className="cost-stat-label">{hasS3 ? "EC2 + EBS" : "Estimated cost"}</span>
+          <span className="cost-stat-value cost-stat-value--highlight">${ec2Cost.toFixed(4)}</span>
         </div>
+        {hasS3 && (
+          <div className="cost-stat">
+            <span className="cost-stat-label">S3 (bundle relay)</span>
+            <span className="cost-stat-value cost-stat-value--highlight">${estimate.s3_estimated_usd.toFixed(6)}</span>
+          </div>
+        )}
       </div>
 
       <p className="cost-monitor-note">
-        Cost is an estimate only (${hourlyRate.toFixed(2)}/hr instance + {ebsSizeGb}GB storage) — real AWS cost
-        tracking wires in later. Terminate below is real: it calls AWS and deletes the instance.
+        Estimated from the real AWS launch time ({estimate.instance_type} @ ${estimate.hourly_rate.toFixed(4)}/hr
+        + EBS storage){hasS3 ? " — the S3 figure stops growing once the relay bundle is deleted" : ""}. Terminate
+        below is real: it calls AWS and deletes the instance.
       </p>
 
       {!terminated && !confirming && (

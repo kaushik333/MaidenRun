@@ -60,7 +60,7 @@ def test_write_secret_parameters_stores_securestring(aws_session):
     ec2.write_secret_parameters(aws_session, DEPLOYMENT_ID, SECRETS)
 
     param = aws_session.client("ssm").get_parameter(
-        Name=f"/agent-feedback-deploy/{DEPLOYMENT_ID}/OPENAI_API_KEY", WithDecryption=True
+        Name=f"/agentdock/{DEPLOYMENT_ID}/OPENAI_API_KEY", WithDecryption=True
     )
     assert param["Parameter"]["Value"] == SECRETS["OPENAI_API_KEY"]
     assert param["Parameter"]["Type"] == "SecureString"
@@ -163,7 +163,7 @@ def test_launch_app_instance_falls_back_to_a_default_name(aws_session):
     )
 
     # Never nameless in the console, even if the user left it blank.
-    assert _name_tag(aws_session.client("ec2"), result["instance_id"]) == f"agent-feedback-deploy-{DEPLOYMENT_ID}"
+    assert _name_tag(aws_session.client("ec2"), result["instance_id"]) == f"agentdock-{DEPLOYMENT_ID}"
 
 
 @mock_aws
@@ -250,7 +250,7 @@ def test_launch_app_instance_writes_secret_before_launch(aws_session):
     )
 
     param = aws_session.client("ssm").get_parameter(
-        Name=f"/agent-feedback-deploy/{DEPLOYMENT_ID}/OPENAI_API_KEY", WithDecryption=True
+        Name=f"/agentdock/{DEPLOYMENT_ID}/OPENAI_API_KEY", WithDecryption=True
     )
     assert param["Parameter"]["Value"] == SECRETS["OPENAI_API_KEY"]
 

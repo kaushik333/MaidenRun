@@ -14,7 +14,7 @@ from app.aws.ec2 import (
 from app.core.config import settings
 from app.core.logging import logger
 
-SECURITY_GROUP_NAME = "agent-feedback-deploy-feedback"
+SECURITY_GROUP_NAME = "agentdock-feedback"
 
 # Fixed, not user-configurable: a form + dashboard + Postgres don't need to
 # scale with whatever the agent itself needs (see infra discussion — this
@@ -35,7 +35,7 @@ def ensure_feedback_security_group(session: boto3.Session) -> str:
 
     group_id = ec2.create_security_group(
         GroupName=SECURITY_GROUP_NAME,
-        Description="Agent Feedback Deploy: feedback stack, ports 8002/8003 only",
+        Description="AgentDock: feedback stack, ports 8002/8003 only",
         VpcId=get_default_vpc_id(ec2),
     )["GroupId"]
     ec2.authorize_security_group_ingress(
@@ -71,11 +71,20 @@ def render_feedback_user_data(deployment_id: str, region: str, bucket: str, key:
     picks both it and DEPLOYMENT_ID up automatically from this script's own
     exported shell environment.
     """
-    password_export = (
-        f'export POSTGRES_PASSWORD="$(aws ssm get-parameter '
-        f'--name "{PARAMETER_NAMESPACE}/{deployment_id}/POSTGRES_PASSWORD" '
-        f'--with-decryption --query Parameter.Value --output text --region {region})"'
-    )
+    def _ssm_export(name: str) -> str:
+        return (
+            f'export {name}="$(aws ssm get-parameter '
+            f'--name "{PARAMETER_NAMESPACE}/{deployment_id}/{name}" '
+            f'--with-decryption --query Parameter.Value --output text --region {region})"'
+        )
+
+    password_export = _ssm_export("POSTGRES_PASSWORD")
+    # The dashboard needs to know its own token to check incoming requests
+    # against — generated control-plane-side and handed to the user in the
+    # URL, but the instance itself has no way to know it without this. Same
+    # SSM SecureString route as the Postgres password, never appearing in
+    # user-data in plaintext.
+    dashboard_token_export = _ssm_export("DASHBOARD_TOKEN")
     pull_with_retry = (
         f"for i in 1 2 3 4 5; do "
         f"aws s3 cp s3://{bucket}/{key} /opt/feedback-bundle.tar.gz --region {region} && break || sleep 10; "
@@ -87,6 +96,7 @@ def render_feedback_user_data(deployment_id: str, region: str, bucket: str, key:
         "set -euo pipefail\n\n"
         f"{DOCKER_INSTALL}\n\n"
         f"{password_export}\n"
+        f"{dashboard_token_export}\n"
         f'export DEPLOYMENT_ID="{deployment_id}"\n\n'
         f"{pull_with_retry}\n"
         "mkdir -p /opt/feedback-stack\n"
@@ -109,17 +119,22 @@ def launch_feedback_stack(
     once it has a public IP, not once the containers are actually serving"
     caveat as launch_app_instance — health is checked separately.
 
-    dashboard_token is generated here (used to gate :8003 once a later phase
-    builds the real dashboard) but nothing persists it server-side yet —
-    there's no metadata table to put it in, since nothing can write to the
-    just-launched Postgres from the control plane (no host port, reachable
-    only from the instance's own Docker network). It's returned directly so
-    the URL shape is already stable for that phase to build on.
+    dashboard_token is generated here and written to SSM (fetched by the
+    instance's own boot script, same SecureString route as the Postgres
+    password — see render_feedback_user_data) so the instance can actually
+    check incoming :8003 requests against it, not just hand it back in the
+    URL. Nothing persists it in the control plane itself — there's no
+    metadata table, since nothing can write to the just-launched Postgres
+    from here (no host port, reachable only from the instance's own Docker
+    network) — so a lost/refreshed browser tab has no way to recover a
+    dashboard link once it scrolls off screen.
     """
     postgres_password = secrets.token_urlsafe(24)
-    write_secret_parameters(session, deployment_id, {"POSTGRES_PASSWORD": postgres_password})
-
     dashboard_token = secrets.token_urlsafe(32)
+    write_secret_parameters(
+        session, deployment_id, {"POSTGRES_PASSWORD": postgres_password, "DASHBOARD_TOKEN": dashboard_token}
+    )
+
     security_group_id = ensure_feedback_security_group(session)
     ami_id, root_device_name = latest_al2023_ami(session)
     user_data = render_feedback_user_data(deployment_id=deployment_id, region=session.region_name, bucket=bucket, key=key)
@@ -139,7 +154,7 @@ def launch_feedback_stack(
                 "ResourceType": "instance",
                 "Tags": [
                     {"Key": "deployment_id", "Value": deployment_id},
-                    {"Key": "Name", "Value": instance_name or f"agent-feedback-deploy-{deployment_id}-feedback"},
+                    {"Key": "Name", "Value": instance_name or f"agentdock-{deployment_id}-feedback"},
                 ],
             }
         ],

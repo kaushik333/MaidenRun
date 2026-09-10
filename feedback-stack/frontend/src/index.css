@@ -96,12 +96,6 @@ body {
   transition: background 0.15s ease, border-color 0.15s ease;
 }
 
-.option--scale {
-  padding: 0.5rem 0.75rem;
-  min-width: 2.2rem;
-  justify-content: center;
-}
-
 .option input {
   position: absolute;
   opacity: 0;

@@ -19,7 +19,7 @@ class Settings(BaseSettings):
 
     # aws
     aws_default_region: str = "us-east-1"
-    aws_credentials_path: str = str(Path.home() / ".agent-feedback-deploy" / "credentials.json")
+    aws_credentials_path: str = str(Path.home() / ".agentdock" / "credentials.json")
 
     # reserved app/feedback ports (fixed contract, see IDEA.md)
     app_port: int = 8001

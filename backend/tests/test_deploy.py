@@ -222,7 +222,7 @@ def test_deploy_reports_it_when_aws_rejects_credentials(_mock_validate, _mock_la
         {
             "Error": {
                 "Code": "InvalidParameterValue",
-                "Message": "Value (agent-feedback-deploy-instance-role) for parameter "
+                "Message": "Value (agentdock-instance-role) for parameter "
                 "iamInstanceProfile.name is invalid. Invalid IAM Instance Profile name",
             }
         },
@@ -299,6 +299,28 @@ def test_deploy_rejects_missing_repo_url() -> None:
     payload = {**EXTERNAL_LLM_PAYLOAD, "repo_url": ""}
     response = client.post("/deploy", json=payload)
     assert response.status_code == 422
+
+
+@mock_aws
+@patch("app.api.deploy.wait_for_port_health", side_effect=_no_op_health)
+@patch("app.api.deploy.validate_repo", return_value=VALID_COMPOSE_REPO)
+def test_deploy_cost_estimate_reflects_real_instance_type_and_launch_time(_mock_validate, _mock_health) -> None:
+    _bootstrap_moto_account()
+    _response, status = _deploy_and_wait(EXTERNAL_LLM_PAYLOAD)
+    deployment_id = _response.json()["deployment_id"]
+
+    response = client.get(f"/deploy/{deployment_id}/cost-estimate")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["instance_type"] == EXTERNAL_LLM_PAYLOAD["instance_type"]
+    assert body["hourly_rate"] > 0
+    assert body["estimated_usd"] >= 0
+    assert body["launched_at"] == status["result"]["launched_at"]
+
+
+def test_deploy_cost_estimate_returns_404_for_unknown_deployment_id() -> None:
+    response = client.get("/deploy/does-not-exist/cost-estimate")
+    assert response.status_code == 404
 
 
 @mock_aws

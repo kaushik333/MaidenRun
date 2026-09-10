@@ -1,38 +1,23 @@
-import re
+import json
 from pathlib import Path
-from typing import Literal
 
-import yaml
 from pydantic import BaseModel, ValidationError
 
 from app.core.logging import logger
 
 
-class _QuestionsYamlLoader(yaml.SafeLoader):
-    """PyYAML's default loader follows YAML 1.1, which resolves unquoted
-    Yes/No/On/Off (in any case) to booleans — exactly the words a multiple-
-    choice question's options are likely to use verbatim, as IDEA.md's own
-    `options: [Yes, Partially, No]` example does. Restrict the bool
-    resolver to YAML 1.2's narrower true/false so those stay plain strings,
-    while `optional: true` still parses as a real boolean.
+class Question(BaseModel):
+    """The one shape used for both the questionnaire schema and a
+    submission: `GET /api/questions` returns these with `answer` always
+    blank, the frontend fills `answer` in per question, and `POST
+    /api/feedback` gets the same array back. There's no separate `type`
+    field — the presence of `options` is what makes a question render (and
+    validate) as a set of choices instead of a free-text box.
     """
 
-
-_QuestionsYamlLoader.yaml_implicit_resolvers = {
-    key: [(tag, regexp) for tag, regexp in mappings if tag != "tag:yaml.org,2002:bool"]
-    for key, mappings in _QuestionsYamlLoader.yaml_implicit_resolvers.items()
-}
-_QuestionsYamlLoader.add_implicit_resolver(
-    "tag:yaml.org,2002:bool", re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$"), list("tTfF")
-)
-
-
-class Question(BaseModel):
-    id: str
-    type: Literal["multiple_choice", "scale", "open_text"]
     question: str
+    answer: str = ""
     options: list[str] | None = None
-    range: tuple[int, int] | None = None
     optional: bool = False
 
 
@@ -41,50 +26,40 @@ class Question(BaseModel):
 # field any domain expert can answer without technical knowledge.
 DEFAULT_QUESTIONS: list[Question] = [
     Question(
-        id="understood_request",
-        type="multiple_choice",
         question="Did the agent understand your request correctly?",
         options=["Yes", "Partially", "No"],
     ),
     Question(
-        id="accuracy",
-        type="scale",
         question="How would you rate the accuracy of the response?",
-        range=(1, 5),
+        options=["1", "2", "3", "4", "5"],
     ),
     Question(
-        id="completed_without_errors",
-        type="multiple_choice",
         question="Did the task complete without errors?",
         options=["Yes", "No"],
     ),
     Question(
-        id="would_use_again",
-        type="multiple_choice",
         question="Would you use this agent again?",
         options=["Yes", "No"],
     ),
     Question(
-        id="comments",
-        type="open_text",
         question="Anything specific to add?",
         optional=True,
     ),
 ]
 
 
-def parse_questions_yaml(text: str) -> list[Question]:
-    """Parses a feedback-questions.yaml document into Questions.
+def parse_questions_json(text: str) -> list[Question]:
+    """Parses a feedback-questions.json document into Questions.
 
     Schema is parsed, not interpreted — question *content* (wording,
     option choices) is never validated or judged, only its shape. Raises
-    yaml.YAMLError on malformed YAML or pydantic.ValidationError on a
+    json.JSONDecodeError on malformed JSON or pydantic.ValidationError on a
     schema that doesn't match Question — callers decide how to handle that
     (load_questions falls back to the default questionnaire).
     """
-    parsed = yaml.load(text, Loader=_QuestionsYamlLoader) or {}
+    parsed = json.loads(text)
     questions = parsed.get("questions") or []
-    return [Question(id=f"q{i}", **q) for i, q in enumerate(questions)]
+    return [Question(**q) for q in questions]
 
 
 def load_questions(path: Path) -> list[Question]:
@@ -100,30 +75,32 @@ def load_questions(path: Path) -> list[Question]:
         return DEFAULT_QUESTIONS
 
     try:
-        questions = parse_questions_yaml(text)
-    except (yaml.YAMLError, ValidationError) as exc:
+        questions = parse_questions_json(text)
+    except (json.JSONDecodeError, ValidationError) as exc:
         logger.warning("could not parse %s, falling back to the default questionnaire: %s", path, exc)
         return DEFAULT_QUESTIONS
 
     return questions or DEFAULT_QUESTIONS
 
 
-def validate_answers(questions: list[Question], answers: dict[str, str | int]) -> list[str]:
-    """Structural validation only — required-answered, choice-in-options,
-    scale-in-range. Never judges whether an answer makes sense."""
+def validate_answers(submitted: list[Question]) -> list[str]:
+    """Structural validation only — required-answered, choice-in-options.
+    Never judges whether an answer makes sense.
+
+    Validates the submitted questions' own internal consistency (each
+    question already carries its own `options`/`optional`, echoed back from
+    what GET /api/questions handed out) rather than cross-referencing the
+    server's separately-loaded schema — the submission is a complete,
+    self-contained record, which is also exactly what gets stored.
+    """
     errors = []
-    for q in questions:
-        value = answers.get(q.id)
-        if value is None or value == "":
+    for q in submitted:
+        if not q.answer:
             if not q.optional:
-                errors.append(f"{q.id}: an answer is required")
+                errors.append(f"{q.question!r}: an answer is required")
             continue
 
-        if q.type == "multiple_choice" and value not in (q.options or []):
-            errors.append(f"{q.id}: '{value}' is not one of {q.options}")
-        elif q.type == "scale":
-            lo, hi = q.range or (1, 5)
-            if not isinstance(value, int) or not (lo <= value <= hi):
-                errors.append(f"{q.id}: must be an integer between {lo} and {hi}")
+        if q.options and q.answer not in q.options:
+            errors.append(f"{q.question!r}: {q.answer!r} is not one of {q.options}")
 
     return errors

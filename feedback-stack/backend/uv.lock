@@ -3,7 +3,7 @@ revision = 3
 requires-python = ">=3.12"
 
 [[package]]
-name = "agent-feedback-deploy-feedback-stack"
+name = "agentdock-feedback-stack"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

@@ -7,10 +7,10 @@ import boto3
 from app.core.config import settings
 from app.core.logging import logger
 
-SECURITY_GROUP_NAME = "agent-feedback-deploy-app"
-INSTANCE_ROLE_NAME = "agent-feedback-deploy-instance-role"
+SECURITY_GROUP_NAME = "agentdock-app"
+INSTANCE_ROLE_NAME = "agentdock-instance-role"
 AMI_PARAMETER = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
-PARAMETER_NAMESPACE = "/agent-feedback-deploy"
+PARAMETER_NAMESPACE = "/agentdock"
 
 # Deterministic provider -> env-var-name mapping (see IDEA.md's "API key ->
 # environment variable mapping is a fixed convention" security bullet).
@@ -68,7 +68,7 @@ class HealthCheckTimeoutError(Ec2LaunchError):
 
 
 def write_secret_parameters(session: boto3.Session, deployment_id: str, secrets: dict[str, str]) -> None:
-    """Writes each secret as a SecureString under /agent-feedback-deploy/<deployment_id>/<name>.
+    """Writes each secret as a SecureString under /agentdock/<deployment_id>/<name>.
 
     Never logged, never written anywhere else — the only other place these
     values are read back is the instance's own boot script, over the AWS
@@ -108,7 +108,7 @@ def ensure_app_security_group(session: boto3.Session) -> str:
 
     group_id = ec2.create_security_group(
         GroupName=SECURITY_GROUP_NAME,
-        Description="Agent Feedback Deploy: app instance, port 8001 only",
+        Description="AgentDock: app instance, port 8001 only",
         VpcId=get_default_vpc_id(ec2),
     )["GroupId"]
     ec2.authorize_security_group_ingress(
@@ -254,7 +254,7 @@ def launch_app_instance(
                     {"Key": "deployment_id", "Value": deployment_id},
                     # Never leave an instance nameless in the console — falls back to
                     # something identifiable if the user didn't type one.
-                    {"Key": "Name", "Value": instance_name or f"agent-feedback-deploy-{deployment_id}"},
+                    {"Key": "Name", "Value": instance_name or f"agentdock-{deployment_id}"},
                 ],
             }
         ],

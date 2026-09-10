@@ -3,27 +3,31 @@ from fastapi.testclient import TestClient
 
 from app.core.config import settings
 from app.main import app
+from app.questions import DEFAULT_QUESTIONS
 
-VALID_ANSWERS = {
-    "understood_request": "Yes",
-    "accuracy": 4,
-    "completed_without_errors": "Yes",
-    "would_use_again": "Yes",
-    "comments": "Worked great.",
-}
+
+def _valid_answers() -> list[dict]:
+    """A fully, validly answered submission matching the app's actual
+    default questionnaire — built from DEFAULT_QUESTIONS rather than
+    hardcoded, so it can't silently drift out of sync with it."""
+    return [
+        {**q.model_dump(), "answer": (q.options[0] if q.options else "Worked great.")} for q in DEFAULT_QUESTIONS
+    ]
 
 
 def test_get_questions_returns_default_questionnaire():
     with TestClient(app) as client:
         response = client.get("/api/questions")
     assert response.status_code == 200
-    ids = [q["id"] for q in response.json()]
-    assert ids == ["understood_request", "accuracy", "completed_without_errors", "would_use_again", "comments"]
+    body = response.json()
+    assert [q["question"] for q in body] == [q.question for q in DEFAULT_QUESTIONS]
+    assert all(q["answer"] == "" for q in body)
 
 
 def test_submit_feedback_writes_row_to_postgres_with_correct_shape():
+    answers = _valid_answers()
     with TestClient(app) as client:
-        response = client.post("/api/feedback", json={"answers": VALID_ANSWERS})
+        response = client.post("/api/feedback", json={"answers": answers})
     assert response.status_code == 201
     assert response.json() == {"status": "recorded"}
 
@@ -35,31 +39,36 @@ def test_submit_feedback_writes_row_to_postgres_with_correct_shape():
     finally:
         conn.close()
 
-    deployment_id, answers, submitted_at = row
+    deployment_id, stored_answers, submitted_at = row
     assert deployment_id == settings.deployment_id
-    assert answers == VALID_ANSWERS
+    # The full question+answer+options shape is preserved, not just bare
+    # values — a row stays self-describing even if the questionnaire
+    # changes later.
+    assert stored_answers == answers
     assert submitted_at is not None
 
 
 def test_submit_feedback_rejects_missing_required_answer():
-    incomplete = {k: v for k, v in VALID_ANSWERS.items() if k != "accuracy"}
+    answers = _valid_answers()
+    answers[0]["answer"] = ""  # first default question is required
     with TestClient(app) as client:
-        response = client.post("/api/feedback", json={"answers": incomplete})
+        response = client.post("/api/feedback", json={"answers": answers})
     assert response.status_code == 422
-    assert "accuracy" in response.json()["detail"]
+    assert "answer is required" in response.json()["detail"]
 
 
-def test_submit_feedback_rejects_invalid_multiple_choice_value():
-    bad = {**VALID_ANSWERS, "understood_request": "Maybe"}
+def test_submit_feedback_rejects_value_not_in_declared_options():
+    answers = _valid_answers()
+    answers[0]["answer"] = "Maybe"  # not one of the declared options
     with TestClient(app) as client:
-        response = client.post("/api/feedback", json={"answers": bad})
+        response = client.post("/api/feedback", json={"answers": answers})
     assert response.status_code == 422
-    assert "understood_request" in response.json()["detail"]
+    assert "not one of" in response.json()["detail"]
 
 
-def test_submit_feedback_rejects_out_of_range_scale():
-    bad = {**VALID_ANSWERS, "accuracy": 10}
+def test_submit_feedback_allows_optional_question_left_blank():
+    answers = _valid_answers()
+    answers[-1]["answer"] = ""  # "comments" is the optional trailing question
     with TestClient(app) as client:
-        response = client.post("/api/feedback", json={"answers": bad})
-    assert response.status_code == 422
-    assert "accuracy" in response.json()["detail"]
+        response = client.post("/api/feedback", json={"answers": answers})
+    assert response.status_code == 201

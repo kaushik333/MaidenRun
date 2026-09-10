@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -7,6 +9,18 @@ class Settings(BaseSettings):
     # server
     feedback_form_port: int = 8002
     cors_origins: str = "*"
+
+    # Same image, two containers (see feedback-stack/docker-compose.yml) —
+    # this decides whether a given process serves the public questionnaire
+    # form or the token-gated dashboard, since they can't both own `/`.
+    service_role: Literal["form", "dashboard"] = "form"
+
+    # Checked against ?token=... on every dashboard request. Fetched from
+    # SSM by the EC2 boot script (see backend/app/aws/feedback_stack.py in
+    # the control plane) — deliberately has no default that would ever
+    # grant access; an unset token means the dashboard is unreachable
+    # rather than silently open.
+    dashboard_token: str = ""
 
     # postgres — always passed in by feedback-stack/docker-compose.yml,
     # pointing at the postgres service on the compose network

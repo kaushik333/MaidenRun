@@ -33,7 +33,7 @@ export default function App() {
             <span />
             <span />
           </div>
-          <h1>Agent Feedback Deploy</h1>
+          <h1>AgentDock</h1>
           <p className="subtitle">
             Point us at your agent's repo and we'll deploy it to your own AWS account,
             with a shareable link and a feedback dashboard included.

@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Feedback dashboard</title>
+<style>
+  :root {
+    --color-bg: #faf9fc;
+    --color-surface: #ffffff;
+    --color-border: #e7e4f0;
+    --color-text: #201a2b;
+    --color-text-muted: #6b6478;
+    --color-primary: #7c3aed;
+    --color-primary-soft: #f1e9ff;
+    --radius-sm: 9px;
+    --radius-lg: 22px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: var(--color-text);
+    background: var(--color-bg);
+    padding: 2rem 1.5rem;
+  }
+  .shell { max-width: 900px; margin: 0 auto; display: flex; flex-direction: column; gap: 1.5rem; }
+  h1 { font-size: 1.4rem; margin: 0; }
+  .meta { color: var(--color-text-muted); font-size: 0.9rem; margin: 0.3rem 0 0; }
+  .card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+  }
+  .summary-grid { display: flex; flex-direction: column; gap: 1.25rem; }
+  .summary-item h3 { margin: 0 0 0.6rem; font-size: 0.95rem; }
+  .bar-row { display: flex; align-items: center; gap: 0.6rem; font-size: 0.85rem; margin-bottom: 0.3rem; }
+  .bar-label { width: 90px; flex-shrink: 0; color: var(--color-text-muted); }
+  .bar-track { flex: 1; background: var(--color-primary-soft); border-radius: 6px; height: 10px; overflow: hidden; }
+  .bar-fill { background: var(--color-primary); height: 100%; }
+  .bar-count { width: 28px; text-align: right; color: var(--color-text-muted); font-size: 0.8rem; }
+  .text-answers { display: flex; flex-direction: column; gap: 0.4rem; }
+  .text-answers p { margin: 0; padding: 0.5rem 0.7rem; background: var(--color-bg); border-radius: var(--radius-sm); font-size: 0.85rem; }
+  input#filter {
+    width: 100%; padding: 0.6rem 0.8rem; border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm); font-size: 0.9rem; font-family: inherit;
+  }
+  .row { border-bottom: 1px solid var(--color-border); padding: 0.9rem 0; }
+  .row:last-child { border-bottom: none; }
+  .row-time { color: var(--color-text-muted); font-size: 0.8rem; margin-bottom: 0.4rem; }
+  .row-qa { font-size: 0.85rem; margin: 0.15rem 0; }
+  .row-qa strong { font-weight: 600; }
+  .empty { color: var(--color-text-muted); font-size: 0.9rem; margin: 0; }
+</style>
+</head>
+<body>
+  <div class="shell">
+    <div>
+      <h1>Feedback dashboard</h1>
+      <p class="meta" id="count-line">Loading…</p>
+    </div>
+
+    <div class="card">
+      <div class="summary-grid" id="summary"></div>
+    </div>
+
+    <div class="card">
+      <input id="filter" type="text" placeholder="Filter by answer text…" />
+      <div id="rows" style="margin-top: 1rem;"></div>
+    </div>
+  </div>
+
+  <script>
+    const token = new URLSearchParams(window.location.search).get("token") || "";
+    let allRows = [];
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    }
+
+    function renderSummary(summary) {
+      const el = document.getElementById("summary");
+      if (!summary.length) {
+        el.innerHTML = '<p class="empty">No submissions yet.</p>';
+        return;
+      }
+      el.innerHTML = summary
+        .map((q) => {
+          if (q.options) {
+            const total = Object.values(q.counts).reduce((a, b) => a + b, 0) || 1;
+            const bars = q.options
+              .map((opt) => {
+                const count = q.counts[opt] || 0;
+                const pct = Math.round((count / total) * 100);
+                return `<div class="bar-row">
+                  <span class="bar-label">${escapeHtml(opt)}</span>
+                  <span class="bar-track"><span class="bar-fill" style="width:${pct}%"></span></span>
+                  <span class="bar-count">${count}</span>
+                </div>`;
+              })
+              .join("");
+            return `<div class="summary-item"><h3>${escapeHtml(q.question)}</h3>${bars}</div>`;
+          }
+          const texts = q.text_answers.length
+            ? q.text_answers.map((t) => `<p>${escapeHtml(t)}</p>`).join("")
+            : '<p class="empty">No responses.</p>';
+          return `<div class="summary-item"><h3>${escapeHtml(q.question)}</h3><div class="text-answers">${texts}</div></div>`;
+        })
+        .join("");
+    }
+
+    function renderRows(rows) {
+      const el = document.getElementById("rows");
+      if (!rows.length) {
+        el.innerHTML = '<p class="empty">No submissions match.</p>';
+        return;
+      }
+      el.innerHTML = rows
+        .map((row) => {
+          const qa = row.answers
+            .map(
+              (a) =>
+                `<p class="row-qa"><strong>${escapeHtml(a.question)}:</strong> ${escapeHtml(a.answer || "(no answer)")}</p>`
+            )
+            .join("");
+          return `<div class="row"><div class="row-time">${new Date(row.submitted_at).toLocaleString()}</div>${qa}</div>`;
+        })
+        .join("");
+    }
+
+    function applyFilter() {
+      const q = document.getElementById("filter").value.trim().toLowerCase();
+      const filtered = !q
+        ? allRows
+        : allRows.filter((row) => row.answers.some((a) => (a.answer || "").toLowerCase().includes(q)));
+      renderRows(filtered);
+    }
+
+    document.getElementById("filter").addEventListener("input", applyFilter);
+
+    fetch(`/api/dashboard/feedback?token=${encodeURIComponent(token)}`)
+      .then((res) => {
+        if (!res.ok) throw new Error("unauthorized");
+        return res.json();
+      })
+      .then((data) => {
+        allRows = data.rows;
+        document.getElementById("count-line").textContent =
+          `${data.rows.length} submission${data.rows.length === 1 ? "" : "s"}`;
+        renderSummary(data.summary);
+        renderRows(allRows);
+      })
+      .catch(() => {
+        document.body.innerHTML =
+          '<main style="padding:3rem;text-align:center;font-family:sans-serif;"><h1>Access denied</h1><p>Missing or invalid token.</p></main>';
+      });
+  </script>
+</body>
+</html>

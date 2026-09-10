@@ -90,7 +90,7 @@ def test_deploy_feedback_deletes_s3_bundle_after_successful_health_check(_mock_h
         aws_access_key_id="test", aws_secret_access_key="test", region_name=settings.aws_default_region
     )
     account_id = session.client("sts").get_caller_identity()["Account"]
-    bucket = f"agent-feedback-deploy-{account_id}"
+    bucket = f"agentdock-{account_id}"
     objects = session.client("s3").list_objects_v2(Bucket=bucket).get("Contents", [])
     assert objects == []
 
@@ -153,11 +153,35 @@ def test_deploy_feedback_rolls_back_instance_and_bundle_on_health_check_failure(
     assert states == ["shutting-down"] or states == ["terminated"]
 
     account_id = session.client("sts").get_caller_identity()["Account"]
-    bucket = f"agent-feedback-deploy-{account_id}"
+    bucket = f"agentdock-{account_id}"
     objects = session.client("s3").list_objects_v2(Bucket=bucket).get("Contents", [])
     assert objects == []
 
 
 def test_deploy_feedback_status_returns_404_for_unknown_deployment_id() -> None:
     response = client.get("/deploy-feedback/does-not-exist/status")
+    assert response.status_code == 404
+
+
+@mock_aws
+@patch("app.api.deploy_feedback.wait_for_port_health", side_effect=_no_op_health)
+def test_deploy_feedback_cost_estimate_returns_ec2_and_s3_figures_separately(_mock_health) -> None:
+    _bootstrap_moto_account()
+    _response, status = _deploy_feedback_and_wait({"aws": AWS, "questionnaire_json": QUESTIONNAIRE})
+    deployment_id = _response.json()["deployment_id"]
+
+    response = client.get(f"/deploy-feedback/{deployment_id}/cost-estimate")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["instance_type"] == "t3.small"
+    assert body["hourly_rate"] > 0
+    assert body["ec2_estimated_usd"] >= 0
+    # The bundle is deleted within the same request that produced this
+    # deployment — its accrual window is essentially instantaneous.
+    assert 0 <= body["s3_estimated_usd"] < 0.0001
+    assert body["launched_at"] == status["result"]["launched_at"]
+
+
+def test_deploy_feedback_cost_estimate_returns_404_for_unknown_deployment_id() -> None:
+    response = client.get("/deploy-feedback/does-not-exist/cost-estimate")
     assert response.status_code == 404

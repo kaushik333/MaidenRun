@@ -1,41 +1,20 @@
 import { useEffect, useState } from "react";
 import "./index.css";
 
-function QuestionField({ question, value, onChange }) {
-  if (question.type === "multiple_choice") {
+function QuestionField({ question, onChange }) {
+  if (question.options) {
     return (
       <div className="options" role="radiogroup" aria-label={question.question}>
         {question.options.map((opt) => (
-          <label key={opt} className={`option ${value === opt ? "is-selected" : ""}`}>
+          <label key={opt} className={`option ${question.answer === opt ? "is-selected" : ""}`}>
             <input
               type="radio"
-              name={question.id}
+              name={question.question}
               value={opt}
-              checked={value === opt}
+              checked={question.answer === opt}
               onChange={() => onChange(opt)}
             />
             {opt}
-          </label>
-        ))}
-      </div>
-    );
-  }
-
-  if (question.type === "scale") {
-    const [lo, hi] = question.range || [1, 5];
-    const steps = Array.from({ length: hi - lo + 1 }, (_, i) => lo + i);
-    return (
-      <div className="options" role="radiogroup" aria-label={question.question}>
-        {steps.map((n) => (
-          <label key={n} className={`option option--scale ${value === n ? "is-selected" : ""}`}>
-            <input
-              type="radio"
-              name={question.id}
-              value={n}
-              checked={value === n}
-              onChange={() => onChange(n)}
-            />
-            {n}
           </label>
         ))}
       </div>
@@ -46,7 +25,7 @@ function QuestionField({ question, value, onChange }) {
     <textarea
       className="textarea"
       rows={4}
-      value={value || ""}
+      value={question.answer}
       onChange={(e) => onChange(e.target.value)}
       placeholder={question.optional ? "Optional" : ""}
     />
@@ -55,7 +34,6 @@ function QuestionField({ question, value, onChange }) {
 
 export default function App() {
   const [questions, setQuestions] = useState(null);
-  const [answers, setAnswers] = useState({});
   const [status, setStatus] = useState("loading"); // loading | ready | submitting | done | error
   const [error, setError] = useState(null);
 
@@ -72,8 +50,8 @@ export default function App() {
       });
   }, []);
 
-  function setAnswer(id, value) {
-    setAnswers((a) => ({ ...a, [id]: value }));
+  function setAnswer(index, value) {
+    setQuestions((qs) => qs.map((q, i) => (i === index ? { ...q, answer: value } : q)));
   }
 
   async function handleSubmit(e) {
@@ -86,7 +64,7 @@ export default function App() {
       res = await fetch("/api/feedback", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ answers }),
+        body: JSON.stringify({ answers: questions }),
       });
     } catch {
       setError("Could not reach the server. Check your connection and try again.");
@@ -128,13 +106,13 @@ export default function App() {
       <div className="card">
         <h1 className="title">Feedback</h1>
         <form className="form" onSubmit={handleSubmit}>
-          {(questions || []).map((q) => (
-            <div className="field" key={q.id}>
+          {(questions || []).map((q, i) => (
+            <div className="field" key={i}>
               <label className="label">
                 {q.question}
                 {q.optional && <span className="hint"> (optional)</span>}
               </label>
-              <QuestionField question={q} value={answers[q.id]} onChange={(v) => setAnswer(q.id, v)} />
+              <QuestionField question={q} onChange={(v) => setAnswer(i, v)} />
             </div>
           ))}
 

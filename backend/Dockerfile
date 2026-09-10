@@ -16,7 +16,6 @@ COPY infra ./infra
 # or bundled into the S3 tarball this control plane ships to a feedback-stack
 # instance — see app/aws/s3_bundle.py, which tars exactly this subtree.
 COPY feedback-stack/docker-compose.yml ./feedback-stack/docker-compose.yml
-COPY feedback-stack/dashboard-placeholder ./feedback-stack/dashboard-placeholder
 COPY feedback-stack/backend/app ./feedback-stack/backend/app
 COPY feedback-stack/backend/pyproject.toml ./feedback-stack/backend/pyproject.toml
 COPY feedback-stack/backend/Dockerfile ./feedback-stack/backend/Dockerfile

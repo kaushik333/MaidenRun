@@ -10,7 +10,7 @@ FAKE_ACCESS_KEY = "AKIAFAKEACCESSKEY00"
 FAKE_SECRET_KEY = "SuperSecretValueThatMustNeverBeLogged"
 
 # Credentials-path isolation (so this never touches the real
-# ~/.agent-feedback-deploy/credentials.json) comes from the autouse fixture
+# ~/.agentdock/credentials.json) comes from the autouse fixture
 # in conftest.py.
 
 

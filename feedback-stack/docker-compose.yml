@@ -33,15 +33,22 @@ services:
       - postgres
 
   feedback-dashboard:
-    # Placeholder until Phase 8 — same shared backend image will replace this
-    # once the token-gated dashboard exists, reusing feedback-form's Postgres
-    # connection and schema rather than a new service.
-    image: nginx:alpine
+    # The exact same image as feedback-form — SERVICE_ROLE picks which
+    # routes it serves at `/` (see app/main.py), since a single process
+    # can't own `/` for both the public form and the token-gated dashboard.
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     restart: unless-stopped
     ports:
-      - "8003:80"
-    volumes:
-      - ./dashboard-placeholder:/usr/share/nginx/html:ro
+      - "8003:8002"
+    environment:
+      - SERVICE_ROLE=dashboard
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/feedback
+      - DEPLOYMENT_ID=${DEPLOYMENT_ID}
+      - DASHBOARD_TOKEN=${DASHBOARD_TOKEN}
+    depends_on:
+      - postgres
 
 volumes:
   pgdata:

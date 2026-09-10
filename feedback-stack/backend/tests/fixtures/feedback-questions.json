@@ -1,0 +1,19 @@
+{
+  "questions": [
+    {
+      "question": "Did the agent understand your request correctly?",
+      "answer": "",
+      "options": ["Yes", "Partially", "No"]
+    },
+    {
+      "question": "How would you rate the accuracy of the response?",
+      "answer": "",
+      "options": ["1", "2", "3", "4", "5"]
+    },
+    {
+      "question": "Anything specific to add?",
+      "answer": "",
+      "optional": true
+    }
+  ]
+}

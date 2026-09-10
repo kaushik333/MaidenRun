@@ -22,9 +22,17 @@ def ensure_schema(conn: psycopg.Connection) -> None:
     conn.commit()
 
 
-def insert_feedback(conn: psycopg.Connection, deployment_id: str, answers: dict) -> None:
+def insert_feedback(conn: psycopg.Connection, deployment_id: str, answers: list[dict]) -> None:
+    """`answers` is the full submitted questionnaire (question text + answer
+    + options per entry, not just bare values) so each row stays
+    self-describing even after the questionnaire is edited or replaced."""
     conn.execute(
         "INSERT INTO feedback (deployment_id, answers) VALUES (%s, %s)",
         (deployment_id, Jsonb(answers)),
     )
     conn.commit()
+
+
+def list_feedback(conn: psycopg.Connection) -> list[dict]:
+    rows = conn.execute("SELECT id, answers, submitted_at FROM feedback ORDER BY submitted_at DESC").fetchall()
+    return [{"id": row_id, "answers": answers, "submitted_at": submitted_at.isoformat()} for row_id, answers, submitted_at in rows]

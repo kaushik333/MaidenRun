@@ -1,6 +1,7 @@
 import json
 import threading
 import uuid
+from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
@@ -8,7 +9,8 @@ from pydantic import BaseModel, Field
 
 from app.aws.credentials import NoCredentialsError, get_session
 from app.aws.ec2 import HealthCheckTimeoutError, terminate_instance, wait_for_port_health
-from app.aws.feedback_stack import launch_feedback_stack
+from app.aws.feedback_stack import EBS_SIZE_GB, INSTANCE_TYPE, launch_feedback_stack
+from app.aws.pricing import EC2_HOURLY_RATES, estimate_ec2_cost, estimate_s3_cost
 from app.aws.s3_bundle import BUNDLE_KEY_PREFIX, build_bundle, delete_bundle, ensure_bundle_bucket, upload_bundle
 from app.core.config import settings
 from app.core.errors import classify_error
@@ -44,10 +46,22 @@ class DeployFeedbackResult(BaseModel):
     feedback_form_url: str
     feedback_dashboard_url: str
     feedback_instance_id: str
+    launched_at: datetime
+    bundle_size_bytes: int
+    bundle_uploaded_at: datetime
+    bundle_deleted_at: datetime | None = None
 
 
 class DeployFeedbackAcceptedResponse(BaseModel):
     deployment_id: str
+
+
+class FeedbackCostEstimate(BaseModel):
+    ec2_estimated_usd: float
+    s3_estimated_usd: float
+    hourly_rate: float
+    instance_type: str
+    launched_at: datetime
 
 
 StepStatus = Literal["pending", "active", "done", "error"]
@@ -102,13 +116,17 @@ def _run_feedback_deployment(
         _set_step(deployment_id, "feedback_bundle", "active")
         bucket = ensure_bundle_bucket(session)
         key = f"{BUNDLE_KEY_PREFIX}{deployment_id}.tar.gz"
-        upload_bundle(session, bucket, key, build_bundle(questionnaire_json))
+        bundle_bytes = build_bundle(questionnaire_json)
+        upload_bundle(session, bucket, key, bundle_bytes)
+        bundle_size_bytes = len(bundle_bytes)
+        bundle_uploaded_at = datetime.now(timezone.utc)
         _set_step(deployment_id, "feedback_bundle", "done")
 
         _set_step(deployment_id, "feedback_compute", "active")
         feedback_result = launch_feedback_stack(
             session, deployment_id=deployment_id, bucket=bucket, key=key, instance_name=instance_name
         )
+        launched_at = datetime.now(timezone.utc)
         _set_step(deployment_id, "feedback_compute", "done")
 
         _set_step(deployment_id, "feedback_health", "active")
@@ -126,6 +144,7 @@ def _run_feedback_deployment(
         # (a strictly earlier step in its own boot script than answering on
         # either port), so it's safe to clean up here — no race.
         delete_bundle(session, bucket, key)
+        bundle_deleted_at = datetime.now(timezone.utc)
 
         with _feedback_deployments_lock:
             _feedback_deployments[deployment_id].result = DeployFeedbackResult(
@@ -135,6 +154,10 @@ def _run_feedback_deployment(
                     f"/?token={feedback_result['dashboard_token']}"
                 ),
                 feedback_instance_id=feedback_result["instance_id"],
+                launched_at=launched_at,
+                bundle_size_bytes=bundle_size_bytes,
+                bundle_uploaded_at=bundle_uploaded_at,
+                bundle_deleted_at=bundle_deleted_at,
             )
     except Exception as exc:  # deliberately broad — terminal handler for the whole background flow
         logger.exception("feedback-stack deployment %s failed", deployment_id)
@@ -173,7 +196,7 @@ def _run_feedback_deployment(
             # (a separate AWS identity from the IAM user's own policy, which
             # is what usually gets re-synced first).
             message += (
-                " If this keeps happening, check that agent-feedback-deploy-instance-role's "
+                " If this keeps happening, check that agentdock-instance-role's "
                 "policy in AWS matches the current infra/instance-role-policy.json — a missing "
                 "s3:GetObject permission there produces exactly this timeout, since the instance "
                 "can never download its own bundle."
@@ -210,3 +233,20 @@ def deploy_feedback_status(deployment_id: str) -> FeedbackDeploymentStatus:
     if status is None:
         raise HTTPException(status_code=404, detail="Unknown deployment_id")
     return status
+
+
+@router.get("/deploy-feedback/{deployment_id}/cost-estimate", response_model=FeedbackCostEstimate)
+def deploy_feedback_cost_estimate(deployment_id: str) -> FeedbackCostEstimate:
+    status = _read_status(deployment_id)
+    if status is None or status.result is None:
+        raise HTTPException(status_code=404, detail="Unknown or not-yet-complete deployment_id")
+    result = status.result
+    return FeedbackCostEstimate(
+        ec2_estimated_usd=estimate_ec2_cost(INSTANCE_TYPE, EBS_SIZE_GB, result.launched_at),
+        s3_estimated_usd=estimate_s3_cost(
+            result.bundle_size_bytes, result.bundle_uploaded_at, result.bundle_deleted_at
+        ),
+        hourly_rate=EC2_HOURLY_RATES.get(INSTANCE_TYPE, 0.0),
+        instance_type=INSTANCE_TYPE,
+        launched_at=result.launched_at,
+    )

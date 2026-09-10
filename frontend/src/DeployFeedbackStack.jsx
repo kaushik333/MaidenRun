@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { BACKEND_URL } from "./config";
+import CostMonitor from "./CostMonitor.jsx";
 import DeploySteps from "./DeploySteps.jsx";
 
 // Mirrors backend/app/api/deploy.py's AWS_REGIONS — same curated list,
@@ -44,6 +45,7 @@ export default function DeployFeedbackStack() {
   const [submitting, setSubmitting] = useState(false);
   const [steps, setSteps] = useState(freshSteps());
   const [hasStarted, setHasStarted] = useState(false);
+  const [deployCount, setDeployCount] = useState(0);
   const pollGenerationRef = useRef(0);
 
   function setStepStatus(id, status, errorMessage = null) {
@@ -60,7 +62,7 @@ export default function DeployFeedbackStack() {
     setFileError(null);
   }
 
-  function pollStatus(deploymentId, generation) {
+  function pollStatus(deploymentId, generation, region, instanceName) {
     if (pollGenerationRef.current !== generation) return;
 
     fetch(`${BACKEND_URL}/deploy-feedback/${deploymentId}/status`)
@@ -73,7 +75,10 @@ export default function DeployFeedbackStack() {
         }
 
         if (data.result) {
-          setResult(data.result);
+          // Snapshot the region/name/deployment id actually used for *this*
+          // deploy — same reasoning as DeployForm.jsx's cost widget wiring.
+          setResult({ ...data.result, region, instanceName, deploymentId });
+          setDeployCount((c) => c + 1);
           setSubmitting(false);
           return;
         }
@@ -85,12 +90,12 @@ export default function DeployFeedbackStack() {
           return;
         }
 
-        setTimeout(() => pollStatus(deploymentId, generation), POLL_INTERVAL_MS);
+        setTimeout(() => pollStatus(deploymentId, generation, region, instanceName), POLL_INTERVAL_MS);
       })
       .catch(() => {
         // A blip reaching our own backend for a poll — not a deployment
         // failure. The background task on the server side is unaffected.
-        setTimeout(() => pollStatus(deploymentId, generation), POLL_INTERVAL_MS);
+        setTimeout(() => pollStatus(deploymentId, generation, region, instanceName), POLL_INTERVAL_MS);
       });
   }
 
@@ -156,7 +161,7 @@ export default function DeployFeedbackStack() {
       return;
     }
 
-    pollStatus(data.deployment_id, generation);
+    pollStatus(data.deployment_id, generation, form.region, form.instance_name.trim() || null);
   }
 
   return (
@@ -167,7 +172,7 @@ export default function DeployFeedbackStack() {
             <h2 className="section-title">Deploy feedback stack</h2>
             <p className="section-hint">
               Independent of the agent deploy above — provisions Postgres, the feedback form (:8002), and the
-              dashboard placeholder (:8003) in your AWS account.
+              token-gated feedback dashboard (:8003) in your AWS account.
             </p>
           </section>
 
@@ -269,6 +274,16 @@ export default function DeployFeedbackStack() {
                 </li>
               </ul>
             </div>
+          )}
+
+          {result && (
+            <CostMonitor
+              key={deployCount}
+              costEstimateUrl={`/deploy-feedback/${result.deploymentId}/cost-estimate`}
+              instanceId={result.feedback_instance_id}
+              instanceName={result.instanceName}
+              region={result.region}
+            />
           )}
         </form>
       </div>

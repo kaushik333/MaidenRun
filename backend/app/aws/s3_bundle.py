@@ -8,7 +8,7 @@ from botocore.exceptions import ClientError
 
 from app.core.logging import logger
 
-BUCKET_NAME_PREFIX = "agent-feedback-deploy"
+BUCKET_NAME_PREFIX = "agentdock"
 BUNDLE_KEY_PREFIX = "feedback-stack-bundles/"
 LIFECYCLE_EXPIRATION_DAYS = 1
 

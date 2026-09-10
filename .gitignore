@@ -2,11 +2,11 @@
 logs/
 **/__pycache__/
 *.pyc
-.pytest_cache/
+**/.pytest_cache/
 
-# backend
-backend/.venv/
+# python
+**/.venv/
 
-# frontend
-frontend/node_modules/
-frontend/dist/
+# node
+**/node_modules/
+**/dist/

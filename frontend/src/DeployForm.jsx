@@ -28,30 +28,20 @@ const PROVIDER_LABELS = {
   openrouter: "OpenRouter",
 };
 
-// Fixed, not user-configurable (Phase 6): a form + dashboard + Postgres
-// don't need to scale with whatever the agent itself needs — mirrors the
-// constants in backend/app/aws/feedback_stack.py.
-const FEEDBACK_INSTANCE_TYPE = "t3.small";
-const FEEDBACK_EBS_SIZE_GB = 20;
-
 // validate/ports/aws_creds resolve together from POST /deploy's single
 // synchronous response (fast: repo validation + local credential lookup,
-// no AWS calls yet). The remaining four ids are polled live from
+// no AWS calls yet). The remaining two ids are polled live from
 // GET /deploy/{id}/status — they're named identically to the keys in that
 // endpoint's `steps` object so status values can be applied directly with
-// no translation layer. Order matches actual provisioning order: the app
-// instance is fully launched and healthy before the feedback stack's own
-// RunInstances call ever fires (sequential launch, not parallel).
+// no translation layer.
 const PIPELINE_STEPS = [
   { id: "validate", label: "Validate repo & config" },
   { id: "ports", label: "Check port clashes" },
   { id: "aws_creds", label: "Authorize AWS access" },
   { id: "app_compute", label: "Provision agent compute" },
   { id: "app_health", label: "Run agent & check :8001" },
-  { id: "feedback_compute", label: "Provision feedback stack" },
-  { id: "feedback_health", label: "Check feedback :8002/:8003" },
 ];
-const POLLED_STEP_IDS = ["app_compute", "app_health", "feedback_compute", "feedback_health"];
+const POLLED_STEP_IDS = ["app_compute", "app_health"];
 const POLL_INTERVAL_MS = 2000;
 
 function freshSteps() {
@@ -65,7 +55,6 @@ const initialState = {
   instance_type: CPU_INSTANCE_TYPES[0],
   ebs_size_gb: EBS_SIZES[0],
   app_instance_name: "",
-  feedback_instance_name: "",
   llm_provider: LLM_PROVIDERS[0],
   api_key: "",
   env_vars: [],
@@ -226,14 +215,12 @@ export default function DeployForm() {
     setSteps(freshSteps());
     const generation = ++pollGenerationRef.current;
 
-    // app_instance_name/feedback_instance_name map to /deploy's
-    // instance_name/feedback_instance_name fields — each becomes that
-    // instance's Name tag.
-    const { app_instance_name, feedback_instance_name, ...formForBackend } = form;
+    // app_instance_name maps to /deploy's instance_name field, which
+    // becomes the instance's Name tag.
+    const { app_instance_name, ...formForBackend } = form;
     const payload = {
       ...formForBackend,
       instance_name: app_instance_name.trim() || null,
-      feedback_instance_name: feedback_instance_name.trim() || null,
       env_vars: form.env_vars.filter((v) => v.key.trim() !== ""),
       llm_provider: form.self_hosted_llm ? null : form.llm_provider,
       api_key: form.self_hosted_llm ? null : form.api_key,
@@ -538,36 +525,6 @@ export default function DeployForm() {
           </>
         )}
 
-        <section className="form-section">
-          <div className="section-heading">
-            <h2 className="section-title">Feedback stack</h2>
-            <span className="section-hint">
-              Fixed size — a form, a dashboard, and Postgres don't need to scale with the agent.
-            </span>
-          </div>
-          <div className="field-row">
-            <div className="field">
-              <label htmlFor="feedback_instance_type">EC2 instance</label>
-              <input id="feedback_instance_type" className="input" value={FEEDBACK_INSTANCE_TYPE} disabled />
-            </div>
-            <div className="field">
-              <label htmlFor="feedback_ebs_size_gb">EBS storage</label>
-              <input id="feedback_ebs_size_gb" className="input" value={`${FEEDBACK_EBS_SIZE_GB} GB`} disabled />
-            </div>
-            <div className="field">
-              <label htmlFor="feedback_instance_name">Instance name</label>
-              <input
-                id="feedback_instance_name"
-                type="text"
-                className="input"
-                placeholder="e.g. my-agent-feedback"
-                value={form.feedback_instance_name}
-                onChange={(e) => setForm((f) => ({ ...f, feedback_instance_name: e.target.value }))}
-              />
-            </div>
-          </div>
-        </section>
-
         <details className="advanced">
           <summary>
             Advanced — additional environment variables
@@ -619,26 +576,12 @@ export default function DeployForm() {
 
         {result && (
           <div className="banner banner--success">
-            <p className="banner-title">Deployed — all three links below are live and answering</p>
+            <p className="banner-title">Deployed — the link below is live and answering</p>
             <ul className="link-list">
               <li className="link-row">
                 <span className="link-label">Agent UI</span>
                 <a className="link-chip" href={result.app_url} target="_blank" rel="noreferrer">
                   {result.app_url}
-                </a>
-              </li>
-              <li className="link-row">
-                <span className="link-label">Feedback form (placeholder page — Phase 7 builds the real form)</span>
-                <a className="link-chip" href={result.feedback_form_url} target="_blank" rel="noreferrer">
-                  {result.feedback_form_url}
-                </a>
-              </li>
-              <li className="link-row">
-                <span className="link-label">
-                  Feedback dashboard (placeholder page, already token-gated — Phase 8 builds the real dashboard)
-                </span>
-                <a className="link-chip" href={result.feedback_dashboard_url} target="_blank" rel="noreferrer">
-                  {result.feedback_dashboard_url}
                 </a>
               </li>
             </ul>

@@ -15,7 +15,6 @@ from app.aws.ec2 import (
     terminate_instance,
     wait_for_port_health,
 )
-from app.aws.feedback_stack import launch_feedback_stack
 from app.core.config import settings
 from app.core.logging import logger
 from app.validation.validator import validate_repo
@@ -74,7 +73,6 @@ class DeployRequest(BaseModel):
     instance_type: str
     ebs_size_gb: Literal[20, 50, 100]
     instance_name: str | None = None
-    feedback_instance_name: str | None = None
     llm_provider: Literal["openai", "anthropic", "azure_openai", "openrouter"] | None = None
     api_key: str | None = None
     env_vars: list[EnvVar] = Field(default_factory=list)
@@ -108,9 +106,6 @@ class DeployResult(BaseModel):
 
     app_url: str
     app_instance_id: str
-    feedback_form_url: str
-    feedback_dashboard_url: str
-    feedback_instance_id: str
 
 
 class DeployAcceptedResponse(BaseModel):
@@ -118,9 +113,7 @@ class DeployAcceptedResponse(BaseModel):
 
 
 StepStatus = Literal["pending", "active", "done", "error"]
-# Order matters: this is also provisioning order (app fully up before the
-# feedback stack starts, per the sequential-launch decision).
-DEPLOY_STEP_IDS = ("app_compute", "app_health", "feedback_compute", "feedback_health")
+DEPLOY_STEP_IDS = ("app_compute", "app_health")
 
 
 class DeploymentStatus(BaseModel):
@@ -208,22 +201,19 @@ def _read_status(deployment_id: str) -> DeploymentStatus | None:
 def _run_deployment(
     deployment_id: str,
     app_session,
-    feedback_session,
     request: DeployRequest,
     entry_point: str,
     app_secrets: dict,
 ) -> None:
-    """The actual sequential provisioning flow — app instance fully up
-    before the feedback stack starts, per the sequential-launch decision.
-    Runs entirely in a background thread, independent of whether the
-    browser stays connected: polling just reads whatever this last wrote,
-    nothing about provisioning depends on a poll ever arriving. A bare
-    `except Exception` at the end is deliberate — without it, an unexpected
-    bug here would leave the deployment stuck "active" forever with no
-    terminal state for the frontend to ever observe.
+    """Launches the app instance and waits for it to become healthy, in a
+    background thread — independent of whether the browser stays connected:
+    polling just reads whatever this last wrote, nothing about provisioning
+    depends on a poll ever arriving. A bare `except Exception` at the end is
+    deliberate — without it, an unexpected bug here would leave the
+    deployment stuck "active" forever with no terminal state for the
+    frontend to ever observe.
     """
     app_result = None
-    feedback_result = None
     try:
         _set_step(deployment_id, "app_compute", "active")
         app_result = launch_app_instance(
@@ -244,33 +234,10 @@ def _run_deployment(
         )
         _set_step(deployment_id, "app_health", "done")
 
-        _set_step(deployment_id, "feedback_compute", "active")
-        feedback_result = launch_feedback_stack(
-            feedback_session, deployment_id=deployment_id, instance_name=request.feedback_instance_name
-        )
-        _set_step(deployment_id, "feedback_compute", "done")
-
-        _set_step(deployment_id, "feedback_health", "active")
-        wait_for_port_health(
-            feedback_result["public_ip"], settings.feedback_form_port,
-            timeout_seconds=settings.app_health_timeout_seconds,
-        )
-        wait_for_port_health(
-            feedback_result["public_ip"], settings.feedback_dashboard_port,
-            timeout_seconds=settings.app_health_timeout_seconds,
-        )
-        _set_step(deployment_id, "feedback_health", "done")
-
         with _deployments_lock:
             _deployments[deployment_id].result = DeployResult(
                 app_url=f"http://{app_result['public_ip']}:{settings.app_port}",
                 app_instance_id=app_result["instance_id"],
-                feedback_form_url=f"http://{feedback_result['public_ip']}:{settings.feedback_form_port}",
-                feedback_dashboard_url=(
-                    f"http://{feedback_result['public_ip']}:{settings.feedback_dashboard_port}"
-                    f"/?token={feedback_result['dashboard_token']}"
-                ),
-                feedback_instance_id=feedback_result["instance_id"],
             )
     except Exception as exc:  # deliberately broad — terminal handler for the whole background flow
         logger.exception("deployment %s failed", deployment_id)
@@ -281,27 +248,22 @@ def _run_deployment(
             if active_step:
                 status.steps[active_step] = "error"
 
-        # All-or-nothing: neither instance succeeding on its own is a complete
-        # deployment — roll back everything that was actually launched.
-        # A rollback failure is logged, never left to raise here — this is
-        # already the terminal error handler, so an unhandled exception past
-        # this point would leave the deployment stuck with no error message
-        # ever recorded, worse than reporting a rollback that may have failed.
-        rollback_failures = []
-        for session, result in ((app_session, app_result), (feedback_session, feedback_result)):
-            if not result:
-                continue
-            try:
-                terminate_instance(session, result["instance_id"])
-            except Exception:
-                logger.exception("rollback: failed to terminate instance %s", result["instance_id"])
-                rollback_failures.append(result["instance_id"])
-
+        # The instance succeeding on its own but never becoming healthy still
+        # isn't a usable deployment — terminate it rather than leave an
+        # orphaned, unhealthy instance running. A rollback failure is logged,
+        # never left to raise here — this is already the terminal error
+        # handler, so an unhandled exception past this point would leave the
+        # deployment stuck with no error message ever recorded, worse than
+        # reporting a rollback that may have failed.
         rollback_note = ""
-        if rollback_failures:
-            rollback_note = (
-                f" (could not confirm rollback of {', '.join(rollback_failures)} — check the AWS console)"
-            )
+        if app_result:
+            try:
+                terminate_instance(app_session, app_result["instance_id"])
+            except Exception:
+                logger.exception("rollback: failed to terminate app instance %s", app_result["instance_id"])
+                rollback_note = (
+                    f" (could not confirm rollback of {app_result['instance_id']} — check the AWS console)"
+                )
 
         _, message = _classify_error(exc)
         with _deployments_lock:
@@ -320,12 +282,7 @@ def deploy(request: DeployRequest, background_tasks: BackgroundTasks) -> DeployA
         app_secrets[PROVIDER_ENV_VARS[request.llm_provider]] = request.api_key
 
     try:
-        # Two separate session objects — the background task uses one per
-        # instance, and boto3 sessions aren't guaranteed safe for concurrent
-        # client creation across threads. Both wrap the same (now-cached)
-        # credentials, so this costs nothing extra.
         app_session = get_session(request.aws.access_key_id, request.aws.secret_access_key, region=request.aws.region)
-        feedback_session = get_session(region=request.aws.region)
     except NoCredentialsError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
@@ -334,7 +291,7 @@ def deploy(request: DeployRequest, background_tasks: BackgroundTasks) -> DeployA
         _deployments[deployment_id] = _new_deployment_status()
 
     background_tasks.add_task(
-        _run_deployment, deployment_id, app_session, feedback_session, request, validation.entry_point, app_secrets
+        _run_deployment, deployment_id, app_session, request, validation.entry_point, app_secrets
     )
     return DeployAcceptedResponse(deployment_id=deployment_id)
 

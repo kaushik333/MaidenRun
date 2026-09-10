@@ -1,0 +1,10 @@
+questions:
+  - type: multiple_choice
+    question: "Did the agent understand your request correctly?"
+    options: [Yes, Partially, No]
+  - type: scale
+    question: "How would you rate the accuracy of the response?"
+    range: [1, 5]
+  - type: open_text
+    question: "Anything specific to add?"
+    optional: true

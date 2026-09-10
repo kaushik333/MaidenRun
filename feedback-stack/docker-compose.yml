@@ -1,0 +1,44 @@
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=feedback
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # No "ports:" on purpose — reachable only from the other containers on
+    # this compose network, by service name, never from the host or outside.
+
+  feedback-form:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8002:8002"
+    environment:
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/feedback
+      - DEPLOYMENT_ID=${DEPLOYMENT_ID}
+      - FEEDBACK_QUESTIONS_PATH=/data/feedback-questions.yaml
+    volumes:
+      # Written by the EC2 boot script from the deployed agent repo's own
+      # feedback-questions.yaml, if it had one (see backend/app/aws/feedback_stack.py
+      # in the control plane) — always exists by the time this runs, even if empty.
+      - /opt/feedback-questions.yaml:/data/feedback-questions.yaml:ro
+    depends_on:
+      - postgres
+
+  feedback-dashboard:
+    # Placeholder until Phase 8 — same shared backend image will replace this
+    # once the token-gated dashboard exists, reusing feedback-form's Postgres
+    # connection and schema rather than a new service.
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "8003:80"
+    volumes:
+      - ./dashboard-placeholder:/usr/share/nginx/html:ro
+
+volumes:
+  pgdata:

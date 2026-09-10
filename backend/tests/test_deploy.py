@@ -90,7 +90,7 @@ def test_deploy_openrouter_provider_accepted(_mock_validate, _mock_health) -> No
 @mock_aws
 @patch("app.api.deploy.wait_for_port_health", side_effect=_no_op_health)
 @patch("app.api.deploy.validate_repo", return_value=VALID_COMPOSE_REPO)
-def test_deploy_launches_both_instances_and_returns_real_links(_mock_validate, mock_health) -> None:
+def test_deploy_launches_app_instance_and_returns_real_link(_mock_validate, mock_health) -> None:
     _bootstrap_moto_account()
     _response, status = _deploy_and_wait(EXTERNAL_LLM_PAYLOAD)
     assert status["error"] is None
@@ -100,23 +100,16 @@ def test_deploy_launches_both_instances_and_returns_real_links(_mock_validate, m
     assert result["app_url"].endswith(":8001")
     assert result["app_instance_id"].startswith("i-")
 
-    assert result["feedback_form_url"].startswith("http://")
-    assert result["feedback_form_url"].endswith(":8002")
-    assert ":8003" in result["feedback_dashboard_url"]
-    assert "token=" in result["feedback_dashboard_url"]  # unguessable-token-gated link, per IDEA.md
-    assert result["feedback_instance_id"].startswith("i-")
-    assert result["feedback_instance_id"] != result["app_instance_id"]  # genuinely two separate instances
-
     assert all(step == "done" for step in status["steps"].values())
-    assert mock_health.call_count == 3  # :8001, :8002, :8003 each actually checked
+    assert mock_health.call_count == 1  # just :8001
 
 
 @mock_aws
 @patch("app.api.deploy.wait_for_port_health", side_effect=_no_op_health)
 @patch("app.api.deploy.validate_repo", return_value=VALID_COMPOSE_REPO)
-def test_deploy_sets_the_given_instance_names(_mock_validate, _mock_health) -> None:
+def test_deploy_sets_the_given_instance_name(_mock_validate, _mock_health) -> None:
     _bootstrap_moto_account()
-    payload = {**EXTERNAL_LLM_PAYLOAD, "instance_name": "my-agent", "feedback_instance_name": "my-agent-feedback"}
+    payload = {**EXTERNAL_LLM_PAYLOAD, "instance_name": "my-agent"}
     _response, status = _deploy_and_wait(payload)
     result = status["result"]
 
@@ -124,13 +117,11 @@ def test_deploy_sets_the_given_instance_names(_mock_validate, _mock_health) -> N
         aws_access_key_id="test", aws_secret_access_key="test", region_name=settings.aws_default_region
     )
     ec2_client = session.client("ec2")
-
-    def name_tag(instance_id: str) -> str:
-        instance = ec2_client.describe_instances(InstanceIds=[instance_id])["Reservations"][0]["Instances"][0]
-        return next(t["Value"] for t in instance["Tags"] if t["Key"] == "Name")
-
-    assert name_tag(result["app_instance_id"]) == "my-agent"
-    assert name_tag(result["feedback_instance_id"]) == "my-agent-feedback"
+    instance = ec2_client.describe_instances(InstanceIds=[result["app_instance_id"]])["Reservations"][0][
+        "Instances"
+    ][0]
+    name_tag = next(t["Value"] for t in instance["Tags"] if t["Key"] == "Name")
+    assert name_tag == "my-agent"
 
 
 @mock_aws
@@ -142,13 +133,7 @@ def test_deploy_passes_the_chosen_region_to_get_session(_mock_get_session, _mock
     payload = {**EXTERNAL_LLM_PAYLOAD, "aws": {**AWS, "region": "eu-west-1"}}
     response = client.post("/deploy", json=payload)
     assert response.status_code == 202
-    # Called twice: once for the app's own session, once for the feedback
-    # stack's own session — separate boto3.Session objects (boto3 sessions
-    # aren't guaranteed safe for concurrent client creation across threads),
-    # but both carrying the same region.
-    assert _mock_get_session.call_count == 2
-    _mock_get_session.assert_any_call("AKIA_TEST", "shh", region="eu-west-1")
-    _mock_get_session.assert_any_call(region="eu-west-1")
+    _mock_get_session.assert_called_once_with("AKIA_TEST", "shh", region="eu-west-1")
 
 
 @mock_aws
@@ -172,10 +157,9 @@ def test_deploy_rejects_invalid_repo_before_touching_aws(_mock_validate) -> None
 
 @mock_aws
 @patch("app.api.deploy.validate_repo", return_value=VALID_COMPOSE_REPO)
-def test_deploy_rolls_back_app_instance_when_its_own_health_check_never_passes(_mock_validate) -> None:
-    """The app instance launched fine but never actually came up healthy — an
-    unhealthy, orphaned instance shouldn't be left running any more than a
-    fully-orphaned one would; the feedback stack should never even start."""
+def test_deploy_rolls_back_app_instance_when_health_check_never_passes(_mock_validate) -> None:
+    """The instance launched fine but never actually came up healthy — an
+    unhealthy, orphaned instance shouldn't be left running."""
     _bootstrap_moto_account()
 
     with patch(
@@ -188,81 +172,13 @@ def test_deploy_rolls_back_app_instance_when_its_own_health_check_never_passes(_
     assert status["result"] is None
     assert "did not respond on port 8001" in status["error"]
     assert status["steps"]["app_health"] == "error"
-    assert status["steps"]["feedback_compute"] == "pending"  # never even attempted
-    assert status["steps"]["feedback_health"] == "pending"
 
     session = boto3.Session(
         aws_access_key_id="test", aws_secret_access_key="test", region_name=settings.aws_default_region
     )
     instances = session.client("ec2").describe_instances()["Reservations"]
     states = [i["State"]["Name"] for r in instances for i in r["Instances"]]
-    assert states == ["shutting-down"] or states == ["terminated"]  # only the app instance was ever launched
-
-
-@mock_aws
-@patch("app.api.deploy.validate_repo", return_value=VALID_COMPOSE_REPO)
-def test_deploy_rolls_back_app_instance_when_feedback_stack_fails(_mock_validate) -> None:
-    """The core rollback policy: the app instance succeeding on its own isn't
-    a complete deployment — a failure anywhere on the feedback side must
-    terminate it too, rather than leaving a partial, orphaned deployment."""
-    _bootstrap_moto_account()
-
-    def health_side_effect(_public_ip, port, **_kwargs):
-        if port == settings.feedback_form_port:
-            raise HealthCheckTimeoutError("did not respond on port 8002 within 300s")
-        return None
-
-    with patch("app.api.deploy.wait_for_port_health", side_effect=health_side_effect):
-        response = client.post("/deploy", json=EXTERNAL_LLM_PAYLOAD)
-        status = _poll_until_terminal(response.json()["deployment_id"])
-
-    assert status["result"] is None
-    assert "did not respond on port 8002" in status["error"]
-    assert status["steps"]["app_compute"] == "done"
-    assert status["steps"]["app_health"] == "done"
-    assert status["steps"]["feedback_health"] == "error"
-
-    # The app instance succeeded on its own, but must have been rolled back too.
-    session = boto3.Session(
-        aws_access_key_id="test", aws_secret_access_key="test", region_name=settings.aws_default_region
-    )
-    instances = session.client("ec2").describe_instances()["Reservations"]
-    states = [i["State"]["Name"] for r in instances for i in r["Instances"]]
-    assert all(s in ("shutting-down", "terminated") for s in states)
-    assert len(states) == 2  # both the app instance and the feedback instance were launched, then rolled back
-
-
-@patch("app.api.deploy.validate_repo", return_value=VALID_COMPOSE_REPO)
-def test_deploy_provisions_sequentially(_mock_validate) -> None:
-    """Regression test for the sequential-launch decision: the app instance
-    must be fully launched and healthy before the feedback stack's own
-    RunInstances call ever fires — not the other way around, and not
-    overlapping. Pure stubs, no moto — real AWS calls (even mocked ones) are
-    an ordering confound this test shouldn't depend on; this tests deploy()'s
-    own orchestration, not provisioning correctness."""
-    call_order = []
-
-    def record_app_launch(*_args, **_kwargs):
-        call_order.append("app_compute")
-        return {"instance_id": "i-app", "public_ip": "1.1.1.1"}
-
-    def record_health(_public_ip, port, **_kwargs):
-        call_order.append("app_health" if port == settings.app_port else "feedback_health")
-
-    def record_feedback_launch(*_args, **_kwargs):
-        call_order.append("feedback_compute")
-        return {"instance_id": "i-feedback", "public_ip": "2.2.2.2", "dashboard_token": "tok"}
-
-    with (
-        patch("app.api.deploy.launch_app_instance", side_effect=record_app_launch),
-        patch("app.api.deploy.wait_for_port_health", side_effect=record_health),
-        patch("app.api.deploy.launch_feedback_stack", side_effect=record_feedback_launch),
-    ):
-        response = client.post("/deploy", json=EXTERNAL_LLM_PAYLOAD)
-        status = _poll_until_terminal(response.json()["deployment_id"])
-
-    assert status["result"] is not None
-    assert call_order == ["app_compute", "app_health", "feedback_compute", "feedback_health", "feedback_health"]
+    assert states == ["shutting-down"] or states == ["terminated"]
 
 
 @patch("app.api.deploy.get_session", side_effect=NoCredentialsError("No AWS credentials cached yet and none were provided."))

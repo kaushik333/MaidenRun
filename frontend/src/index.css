@@ -8,13 +8,14 @@
   --color-text: #201a2b;
   --color-text-muted: #6b6478;
   --color-text-faint: #9791a3;
+  --color-heading: #3d2467;
+  --color-cost: #a3620a;
 
-  /* modern-art accent palette, used for gradients + decorative art */
+  /* accent palette — violet is the one brand hue; coral survives only in the logo mark */
   --art-violet: #7c3aed;
   --art-violet-deep: #5b21b6;
+  --art-violet-light: #a78bfa;
   --art-coral: #fb6f92;
-  --art-amber: #f6ad37;
-  --art-cyan: #33c9dc;
 
   --color-primary: #7c3aed;
   --color-primary-hover: #6d28d9;
@@ -34,7 +35,34 @@
   --radius-lg: 22px;
 
   --shadow-card: 0 1px 2px rgba(32, 26, 43, 0.04), 0 24px 48px -12px rgba(76, 29, 149, 0.18);
-  --gradient-brand: linear-gradient(135deg, var(--art-violet) 0%, var(--art-coral) 55%, var(--art-amber) 100%);
+  --gradient-accent: linear-gradient(135deg, var(--art-violet) 0%, var(--art-violet-deep) 100%);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --color-bg: #131018;
+  --color-surface: #1c1826;
+  --color-surface-muted: #241f30;
+  --color-border: rgba(255, 255, 255, 0.09);
+  --color-text: #f2eef7;
+  --color-text-muted: #ada4b8;
+  --color-text-faint: #786f88;
+  --color-heading: #c9b8f5;
+  --color-cost: #f6ad37;
+
+  --color-primary-soft: rgba(124, 58, 237, 0.18);
+  --color-primary-soft-border: rgba(124, 58, 237, 0.4);
+
+  --color-success: #4ade91;
+  --color-success-soft: rgba(23, 135, 94, 0.18);
+  --color-success-border: rgba(23, 135, 94, 0.4);
+
+  --color-danger: #ff6b7a;
+  --color-danger-soft: rgba(216, 57, 74, 0.18);
+  --color-danger-border: rgba(216, 57, 74, 0.4);
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.2), 0 24px 48px -12px rgba(0, 0, 0, 0.45);
 }
 
 * {
@@ -70,7 +98,7 @@ body {
   position: absolute;
   border-radius: 50%;
   filter: blur(90px);
-  opacity: 0.55;
+  opacity: 0.35;
   mix-blend-mode: multiply;
   will-change: transform;
 }
@@ -89,7 +117,7 @@ body {
   height: 460px;
   top: -120px;
   right: -160px;
-  background: radial-gradient(circle at 60% 40%, var(--art-coral), transparent 70%);
+  background: radial-gradient(circle at 60% 40%, var(--art-violet-deep), transparent 70%);
   animation: drift-b 22s ease-in-out infinite alternate;
 }
 
@@ -98,9 +126,9 @@ body {
   height: 480px;
   bottom: -200px;
   left: 8%;
-  background: radial-gradient(circle at 50% 50%, var(--art-cyan), transparent 70%);
+  background: radial-gradient(circle at 50% 50%, var(--art-violet-light), transparent 70%);
   animation: drift-c 30s ease-in-out infinite alternate;
-  opacity: 0.4;
+  opacity: 0.24;
 }
 
 .blob--d {
@@ -108,9 +136,9 @@ body {
   height: 380px;
   bottom: -140px;
   right: 6%;
-  background: radial-gradient(circle at 50% 50%, var(--art-amber), transparent 70%);
+  background: radial-gradient(circle at 50% 50%, var(--art-violet), transparent 70%);
   animation: drift-d 24s ease-in-out infinite alternate;
-  opacity: 0.45;
+  opacity: 0.28;
 }
 
 @keyframes drift-a {
@@ -163,47 +191,46 @@ body {
   padding: 4.5rem 1.5rem 4rem;
 }
 
+.theme-toggle {
+  position: fixed;
+  top: 1.25rem;
+  right: 1.25rem;
+  z-index: 10;
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  box-shadow: var(--shadow-card);
+  transition: color 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+
+.theme-toggle:hover {
+  color: var(--color-primary);
+  transform: translateY(-1px);
+}
+
 .shell {
   width: 100%;
   max-width: 620px;
+  display: flex;
+  flex-direction: column;
+  gap: 2.25rem;
 }
 
 .shell-header {
   text-align: center;
-  margin-bottom: 2rem;
 }
 
 .logo-mark {
-  position: relative;
   width: 46px;
   height: 46px;
   margin: 0 auto 1.1rem;
-}
-
-.logo-mark span {
-  position: absolute;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  mix-blend-mode: multiply;
-}
-
-.logo-mark span:nth-child(1) {
-  top: 0;
-  left: 6px;
-  background: var(--art-violet);
-}
-
-.logo-mark span:nth-child(2) {
-  top: 12px;
-  left: 20px;
-  background: var(--art-coral);
-}
-
-.logo-mark span:nth-child(3) {
-  top: 16px;
-  left: 4px;
-  background: var(--art-amber);
 }
 
 .shell-header h1 {
@@ -211,10 +238,7 @@ body {
   font-weight: 800;
   letter-spacing: -0.02em;
   margin: 0 0 0.5rem;
-  background: var(--gradient-brand);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  color: var(--color-heading);
 }
 
 .subtitle {
@@ -282,8 +306,22 @@ body {
 .card-wrap {
   padding: 1.5px;
   border-radius: calc(var(--radius-lg) + 1.5px);
-  background: var(--gradient-brand);
+  background: var(--gradient-accent);
   box-shadow: var(--shadow-card);
+}
+
+.tab-bar {
+  align-self: center;
+}
+
+.tab-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  margin-left: 6px;
+  vertical-align: middle;
 }
 
 .card {
@@ -417,7 +455,7 @@ body {
 }
 
 .segmented-option.is-active {
-  background: var(--gradient-brand);
+  background: var(--gradient-accent);
   color: #fff;
   box-shadow: 0 6px 16px -4px rgba(124, 58, 237, 0.55);
 }
@@ -505,10 +543,7 @@ body {
   padding: 0;
   font-size: 0.85rem;
   font-weight: 700;
-  background: var(--gradient-brand);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  color: var(--color-primary);
   cursor: pointer;
 }
 
@@ -526,7 +561,7 @@ body {
   font-size: 1rem;
   font-weight: 700;
   color: #fff;
-  background: var(--gradient-brand);
+  background: var(--gradient-accent);
   background-size: 160% 160%;
   border: none;
   border-radius: var(--radius-md);
@@ -598,13 +633,37 @@ body {
 }
 
 .banner--success::before {
-  background: linear-gradient(180deg, var(--art-violet), var(--art-cyan));
+  background: var(--color-primary);
 }
 
 .banner-title {
   margin: 0 0 0.7rem;
   font-weight: 700;
   color: var(--color-success);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.banner-title-icon {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--color-success);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+}
+
+.banner-success-actions {
+  margin-top: 0.7rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem 1.2rem;
+  align-items: center;
 }
 
 .link-list {
@@ -636,11 +695,30 @@ body {
 .link-chip {
   font-size: 0.85rem;
   font-weight: 700;
-  background: var(--gradient-brand);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  color: var(--color-primary);
   text-decoration: none;
+}
+
+.link-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.copy-link-btn {
+  flex: none;
+  border: 1px solid var(--color-success-border);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.25rem 0.6rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.copy-link-btn:hover {
+  color: var(--color-text);
 }
 
 .link-chip:hover {
@@ -805,6 +883,18 @@ body {
   margin: -0.75rem 0 0;
 }
 
+.reuse-creds-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  padding: 0.7rem 0.9rem;
+  background: var(--color-surface-muted);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
 /* ---- cost monitor & terminate control ---- */
 
 .cost-monitor {
@@ -871,10 +961,7 @@ body {
 }
 
 .cost-stat-value--highlight {
-  background: var(--gradient-brand);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  color: var(--color-cost);
 }
 
 .cost-monitor-note {
@@ -959,7 +1046,7 @@ body {
   align-items: center;
   gap: 0.4rem;
   border: none;
-  background: var(--gradient-brand);
+  background: var(--gradient-accent);
   color: #fff;
   border-radius: 999px;
   padding: 0.4rem 0.85rem 0.4rem 0.65rem;
@@ -1074,7 +1161,7 @@ body {
   width: 32px;
   height: 32px;
   border-radius: 999px;
-  background: var(--gradient-brand);
+  background: var(--gradient-accent);
   color: #fff;
   font-size: 0.88rem;
   font-weight: 700;

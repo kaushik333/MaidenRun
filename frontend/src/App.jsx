@@ -1,11 +1,44 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import DeployFeedbackStack from "./DeployFeedbackStack.jsx";
 import DeployForm from "./DeployForm.jsx";
 import { BACKEND_URL } from "./config";
 import "./index.css";
 
+const THEME_STORAGE_KEY = "agentdock-theme";
+
+function getInitialTheme() {
+  try {
+    const stored = localStorage.getItem(THEME_STORAGE_KEY);
+    if (stored === "light" || stored === "dark") return stored;
+  } catch {
+    // localStorage can be unavailable (private mode, disabled storage) —
+    // fall through to the system preference for this load.
+  }
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
 export default function App() {
   const [status, setStatus] = useState("checking...");
+  const [activeTab, setActiveTab] = useState("deploy");
+  const [lastDeploy, setLastDeploy] = useState(null);
+  const [feedbackDeploy, setFeedbackDeploy] = useState(null);
+  const [theme, setTheme] = useState(getInitialTheme);
+
+  // useLayoutEffect (not useEffect) so the attribute is set before the
+  // browser paints — avoids a flash of the wrong theme on load.
+  useLayoutEffect(() => {
+    document.documentElement.dataset.theme = theme;
+  }, [theme]);
+
+  function toggleTheme() {
+    const next = theme === "dark" ? "light" : "dark";
+    setTheme(next);
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, next);
+    } catch {
+      // Persistence is a convenience; the toggle still works for this tab.
+    }
+  }
 
   useEffect(() => {
     fetch(`${BACKEND_URL}/health`)
@@ -19,6 +52,34 @@ export default function App() {
 
   return (
     <main className="page">
+      <button
+        type="button"
+        className="theme-toggle"
+        onClick={toggleTheme}
+        aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+        title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+      >
+        {theme === "dark" ? (
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path
+              d="M21 12.8A9 9 0 1 1 11.2 3a7.2 7.2 0 0 0 9.8 9.8Z"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinejoin="round"
+            />
+          </svg>
+        ) : (
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <circle cx="12" cy="12" r="4.5" stroke="currentColor" strokeWidth="2" />
+            <path
+              d="M12 2.5v2.5M12 19v2.5M4.2 4.2l1.8 1.8M18 18l1.8 1.8M2.5 12H5M19 12h2.5M4.2 19.8 6 18M18 6l1.8-1.8"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+            />
+          </svg>
+        )}
+      </button>
       <div className="art-bg" aria-hidden="true">
         <span className="blob blob--a" />
         <span className="blob blob--b" />
@@ -29,9 +90,17 @@ export default function App() {
       <div className="shell">
         <header className="shell-header">
           <div className="logo-mark" aria-hidden="true">
-            <span />
-            <span />
-            <span />
+            <svg viewBox="0 0 100 100" width="46" height="46" fill="none">
+              <path
+                d="M40 22H24C18.477 22 14 26.477 14 32V68C14 73.523 18.477 78 24 78H40"
+                stroke="var(--art-violet)"
+                strokeWidth="9"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+              <path d="M49 50H33" stroke="var(--art-coral)" strokeWidth="9" strokeLinecap="round" />
+              <circle cx="66" cy="50" r="17" fill="var(--art-coral)" />
+            </svg>
           </div>
           <h1>AgentDock</h1>
           <p className="subtitle">
@@ -43,8 +112,39 @@ export default function App() {
             backend: {status}
           </span>
         </header>
-        <DeployForm />
-        <DeployFeedbackStack />
+
+        <div className="segmented tab-bar" role="tablist" aria-label="Sections">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "deploy"}
+            className={`segmented-option ${activeTab === "deploy" ? "is-active" : ""}`}
+            onClick={() => setActiveTab("deploy")}
+          >
+            Deploy
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "feedback"}
+            className={`segmented-option ${activeTab === "feedback" ? "is-active" : ""}`}
+            onClick={() => setActiveTab("feedback")}
+          >
+            Feedback stack
+            {feedbackDeploy && <span className="tab-dot" aria-hidden="true" />}
+          </button>
+        </div>
+
+        <div hidden={activeTab !== "deploy"}>
+          <DeployForm
+            onDeploySuccess={setLastDeploy}
+            onGoToFeedback={() => setActiveTab("feedback")}
+            feedbackDeployed={Boolean(feedbackDeploy)}
+          />
+        </div>
+        <div hidden={activeTab !== "feedback"}>
+          <DeployFeedbackStack onDeploySuccess={setFeedbackDeploy} lastAwsRegion={lastDeploy?.region ?? null} />
+        </div>
       </div>
     </main>
   );

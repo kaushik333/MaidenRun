@@ -62,7 +62,7 @@ const initialState = {
 
 const IDLE_REPO_CHECK = { status: "idle", entry_point: null, error: null };
 
-export default function DeployForm() {
+export default function DeployForm({ onDeploySuccess, onGoToFeedback, feedbackDeployed }) {
   const [form, setForm] = useState(initialState);
   const [result, setResult] = useState(null);
   const [submitting, setSubmitting] = useState(false);
@@ -70,6 +70,7 @@ export default function DeployForm() {
   const [hasStarted, setHasStarted] = useState(false);
   const [repoCheck, setRepoCheck] = useState(IDLE_REPO_CHECK);
   const [deployCount, setDeployCount] = useState(0);
+  const [linkCopied, setLinkCopied] = useState(false);
   // Bumped on every submit; each poll checks it still matches before touching
   // state, so a stale poll from an old deployment can never clobber a newer
   // one's steps (e.g. after the user starts a second deploy).
@@ -115,6 +116,17 @@ export default function DeployForm() {
       setRepoCheck({ status: "valid", entry_point: data.entry_point, error: null });
     } else {
       setRepoCheck({ status: "invalid", entry_point: null, error: data.error || "Repository check failed" });
+    }
+  }
+
+  async function copyLink(url) {
+    try {
+      await navigator.clipboard.writeText(url);
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 1500);
+    } catch {
+      // Clipboard access can be blocked — the link is still visible and
+      // selectable in the chip, so this is a convenience failure only.
     }
   }
 
@@ -171,14 +183,16 @@ export default function DeployForm() {
           // Snapshot the region/name/deployment id actually used for *this*
           // deploy onto the result — reading them live off `form` later
           // would drift if the user keeps editing the form afterward.
-          setResult({
+          const finalResult = {
             ...data.result,
             region,
             instanceName: appInstanceName,
             deploymentId,
-          });
+          };
+          setResult(finalResult);
           setDeployCount((c) => c + 1);
           setSubmitting(false);
+          onDeploySuccess?.(finalResult);
           return;
         }
 
@@ -568,15 +582,30 @@ export default function DeployForm() {
 
         {result && (
           <div className="banner banner--success">
-            <p className="banner-title">Deployed — the link below is live and answering</p>
+            <p className="banner-title">
+              <span className="banner-title-icon" aria-hidden="true">✓</span>
+              Deployed — the link below is live and answering
+            </p>
             <ul className="link-list">
               <li className="link-row">
                 <span className="link-label">Agent UI</span>
-                <a className="link-chip" href={result.app_url} target="_blank" rel="noreferrer">
-                  {result.app_url}
-                </a>
+                <span className="link-row-actions">
+                  <a className="link-chip" href={result.app_url} target="_blank" rel="noreferrer">
+                    {result.app_url}
+                  </a>
+                  <button type="button" className="copy-link-btn" onClick={() => copyLink(result.app_url)}>
+                    {linkCopied ? "Copied" : "Copy"}
+                  </button>
+                </span>
               </li>
             </ul>
+            {!feedbackDeployed && (
+              <div className="banner-success-actions">
+                <button type="button" className="link-btn" onClick={onGoToFeedback}>
+                  Want feedback on this agent? Set up the feedback stack →
+                </button>
+              </div>
+            )}
           </div>
         )}
 

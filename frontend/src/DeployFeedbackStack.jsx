@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { BACKEND_URL } from "./config";
 import CostMonitor from "./CostMonitor.jsx";
 import DeploySteps from "./DeploySteps.jsx";
@@ -37,7 +37,7 @@ const initialState = {
   instance_name: "",
 };
 
-export default function DeployFeedbackStack() {
+export default function DeployFeedbackStack({ onDeploySuccess, lastAwsRegion }) {
   const [form, setForm] = useState(initialState);
   const [questionnaireFile, setQuestionnaireFile] = useState(null);
   const [fileError, setFileError] = useState(null);
@@ -46,7 +46,18 @@ export default function DeployFeedbackStack() {
   const [steps, setSteps] = useState(freshSteps());
   const [hasStarted, setHasStarted] = useState(false);
   const [deployCount, setDeployCount] = useState(0);
+  const [reuseCredentials, setReuseCredentials] = useState(Boolean(lastAwsRegion));
   const pollGenerationRef = useRef(0);
+
+  // A deploy elsewhere in the app becomes known after this component has
+  // already mounted — pick up its region and switch to the reuse affordance
+  // once it lands, rather than only checking on first render.
+  useEffect(() => {
+    if (lastAwsRegion) {
+      setForm((f) => ({ ...f, region: lastAwsRegion }));
+      setReuseCredentials(true);
+    }
+  }, [lastAwsRegion]);
 
   function setStepStatus(id, status, errorMessage = null) {
     setSteps((prev) => prev.map((s) => (s.id === id ? { ...s, status, errorMessage } : s)));
@@ -77,9 +88,11 @@ export default function DeployFeedbackStack() {
         if (data.result) {
           // Snapshot the region/name/deployment id actually used for *this*
           // deploy — same reasoning as DeployForm.jsx's cost widget wiring.
-          setResult({ ...data.result, region, instanceName, deploymentId });
+          const finalResult = { ...data.result, region, instanceName, deploymentId };
+          setResult(finalResult);
           setDeployCount((c) => c + 1);
           setSubmitting(false);
+          onDeploySuccess?.(finalResult);
           return;
         }
 
@@ -194,45 +207,58 @@ export default function DeployFeedbackStack() {
           <section className="form-section">
             <div className="section-heading">
               <h2 className="section-title">AWS credentials</h2>
-              <span className="section-hint">Leave blank to reuse credentials already cached from a prior deploy.</span>
+              {!reuseCredentials && (
+                <span className="section-hint">Leave blank to reuse credentials already cached from a prior deploy.</span>
+              )}
             </div>
-            <div className="field-row">
-              <div className="field">
-                <label htmlFor="feedback_access_key_id">Access key ID</label>
-                <input
-                  id="feedback_access_key_id"
-                  type="text"
-                  className="input"
-                  value={form.access_key_id}
-                  onChange={(e) => updateField("access_key_id", e.target.value)}
-                />
+            {reuseCredentials ? (
+              <div className="reuse-creds-row">
+                <span className="field-status field-status--ok">
+                  ✓ Using AWS credentials from your last deploy ({form.region})
+                </span>
+                <button type="button" className="link-btn" onClick={() => setReuseCredentials(false)}>
+                  Change
+                </button>
               </div>
-              <div className="field">
-                <label htmlFor="feedback_secret_access_key">Secret access key</label>
-                <input
-                  id="feedback_secret_access_key"
-                  type="password"
-                  className="input"
-                  value={form.secret_access_key}
-                  onChange={(e) => updateField("secret_access_key", e.target.value)}
-                />
+            ) : (
+              <div className="field-row">
+                <div className="field">
+                  <label htmlFor="feedback_access_key_id">Access key ID</label>
+                  <input
+                    id="feedback_access_key_id"
+                    type="text"
+                    className="input"
+                    value={form.access_key_id}
+                    onChange={(e) => updateField("access_key_id", e.target.value)}
+                  />
+                </div>
+                <div className="field">
+                  <label htmlFor="feedback_secret_access_key">Secret access key</label>
+                  <input
+                    id="feedback_secret_access_key"
+                    type="password"
+                    className="input"
+                    value={form.secret_access_key}
+                    onChange={(e) => updateField("secret_access_key", e.target.value)}
+                  />
+                </div>
+                <div className="field">
+                  <label htmlFor="feedback_region">Region</label>
+                  <select
+                    id="feedback_region"
+                    className="input"
+                    value={form.region}
+                    onChange={(e) => updateField("region", e.target.value)}
+                  >
+                    {AWS_REGIONS.map((r) => (
+                      <option key={r} value={r}>
+                        {r}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
-              <div className="field">
-                <label htmlFor="feedback_region">Region</label>
-                <select
-                  id="feedback_region"
-                  className="input"
-                  value={form.region}
-                  onChange={(e) => updateField("region", e.target.value)}
-                >
-                  {AWS_REGIONS.map((r) => (
-                    <option key={r} value={r}>
-                      {r}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
+            )}
           </section>
 
           <section className="form-section">

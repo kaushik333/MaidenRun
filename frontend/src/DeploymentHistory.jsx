@@ -21,6 +21,12 @@ function formatRelative(iso) {
   return `${days}d ago`;
 }
 
+function formatTimestamp(iso) {
+  if (!iso) return "";
+  const absolute = new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  return `${absolute} (${formatRelative(iso)})`;
+}
+
 function DecisionsList({ decisions }) {
   const entries = Object.entries(decisions || {}).filter(([key]) => DECISION_LABELS[key]);
   const envKeys = decisions?.env_var_keys;
@@ -94,11 +100,21 @@ function DeploymentRow({ record, onChanged }) {
         </span>
         <div className="history-row-info">
           <span className="history-row-name">{record.instance_name || record.instance_id}</span>
-          <span className="history-row-meta">
-            {record.region} · deployed {formatRelative(record.deployed_at)}
-            {record.status === "terminated" && ` · terminated ${formatRelative(record.terminated_at)}`}
-          </span>
+          <span className="history-row-meta">{record.region}</span>
         </div>
+      </div>
+
+      <div className="history-row-times">
+        <div className="cost-stat">
+          <span className="cost-stat-label">Created at</span>
+          <span className="cost-stat-value">{formatTimestamp(record.deployed_at)}</span>
+        </div>
+        {record.status === "terminated" && (
+          <div className="cost-stat">
+            <span className="cost-stat-label">Terminated at</span>
+            <span className="cost-stat-value">{formatTimestamp(record.terminated_at)}</span>
+          </div>
+        )}
       </div>
 
       <div className="history-row-links">
@@ -148,8 +164,6 @@ function DeploymentRow({ record, onChanged }) {
           {error && <p className="terminate-error">{error}</p>}
         </div>
       )}
-
-      {record.status === "terminated" && <span className="history-terminated-tag">Terminated</span>}
     </div>
   );
 }

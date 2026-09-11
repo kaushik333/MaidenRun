@@ -940,6 +940,12 @@ body {
   color: var(--color-text-faint);
 }
 
+.history-row-times {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.5rem;
+}
+
 .history-row-links {
   display: flex;
   flex-wrap: wrap;
@@ -974,13 +980,6 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
-}
-
-.history-terminated-tag {
-  align-self: flex-start;
-  font-size: 0.76rem;
-  font-weight: 700;
-  color: var(--color-text-faint);
 }
 
 .reuse-creds-row {

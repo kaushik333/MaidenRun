@@ -3,11 +3,12 @@ import { BACKEND_URL } from "./config";
 import AwsSetupGuide from "./AwsSetupGuide.jsx";
 import CostMonitor from "./CostMonitor.jsx";
 import DeploySteps from "./DeploySteps.jsx";
+import PasswordField from "./PasswordField.jsx";
 
 const GPU_INSTANCE_TYPES = ["g4dn.xlarge", "g5.xlarge"];
 const CPU_INSTANCE_TYPES = ["t3.small", "t3.medium", "m5.xlarge"];
 const EBS_SIZES = [20, 50, 100];
-const LLM_PROVIDERS = ["openai", "anthropic", "azure_openai", "openrouter"];
+const LLM_PROVIDERS = ["openai", "anthropic", "azure_openai", "openrouter", "other"];
 // Curated, not exhaustive — mirrors backend/app/api/deploy.py's AWS_REGIONS.
 const AWS_REGIONS = [
   "us-east-1",
@@ -26,6 +27,21 @@ const PROVIDER_LABELS = {
   anthropic: "Anthropic",
   azure_openai: "Azure OpenAI",
   openrouter: "OpenRouter",
+  other: "Other",
+};
+
+// Defaults only, not the only option — mirrors backend/app/aws/ec2.py's
+// PROVIDER_ENV_VARS. Different agent frameworks read different names for
+// the same provider (e.g. OAI_API_KEY instead of OPENAI_API_KEY), so the
+// form lets this be overridden per deploy rather than hardcoding it.
+// "other" deliberately has no entry — there's no sensible default for a
+// provider not in this list, and new ones show up too often to keep
+// chasing with a fixed dropdown.
+const PROVIDER_ENV_VAR_DEFAULTS = {
+  openai: "OPENAI_API_KEY",
+  anthropic: "ANTHROPIC_API_KEY",
+  azure_openai: "AZURE_OPENAI_API_KEY",
+  openrouter: "OPENROUTER_API_KEY",
 };
 
 // validate/ports/aws_creds resolve together from POST /deploy's single
@@ -57,6 +73,7 @@ const initialState = {
   app_instance_name: "",
   llm_provider: LLM_PROVIDERS[0],
   api_key: "",
+  env_var_name: PROVIDER_ENV_VAR_DEFAULTS[LLM_PROVIDERS[0]],
   env_vars: [],
 };
 
@@ -141,6 +158,7 @@ export default function DeployForm({ onDeploySuccess, onGoToFeedback, feedbackDe
       instance_type: value ? GPU_INSTANCE_TYPES[0] : CPU_INSTANCE_TYPES[0],
       llm_provider: value ? null : LLM_PROVIDERS[0],
       api_key: value ? "" : f.api_key,
+      env_var_name: value ? "" : f.env_var_name || PROVIDER_ENV_VAR_DEFAULTS[LLM_PROVIDERS[0]],
     }));
   }
 
@@ -237,6 +255,7 @@ export default function DeployForm({ onDeploySuccess, onGoToFeedback, feedbackDe
       env_vars: form.env_vars.filter((v) => v.key.trim() !== ""),
       llm_provider: form.self_hosted_llm ? null : form.llm_provider,
       api_key: form.self_hosted_llm ? null : form.api_key,
+      env_var_name: form.self_hosted_llm ? null : form.env_var_name,
     };
 
     setStepStatus("validate", "active");
@@ -354,10 +373,8 @@ export default function DeployForm({ onDeploySuccess, onGoToFeedback, feedbackDe
             </div>
             <div className="field">
               <label htmlFor="secret_access_key">Secret access key</label>
-              <input
+              <PasswordField
                 id="secret_access_key"
-                type="password"
-                className="input"
                 required
                 value={form.aws.secret_access_key}
                 onChange={(e) => updateAws("secret_access_key", e.target.value)}
@@ -459,7 +476,14 @@ export default function DeployForm({ onDeploySuccess, onGoToFeedback, feedbackDe
                     id="llm_provider"
                     className="select"
                     value={form.llm_provider}
-                    onChange={(e) => setForm((f) => ({ ...f, llm_provider: e.target.value }))}
+                    onChange={(e) => {
+                      const provider = e.target.value;
+                      setForm((f) => ({
+                        ...f,
+                        llm_provider: provider,
+                        env_var_name: PROVIDER_ENV_VAR_DEFAULTS[provider] ?? "",
+                      }));
+                    }}
                   >
                     {LLM_PROVIDERS.map((p) => (
                       <option key={p} value={p}>
@@ -470,16 +494,30 @@ export default function DeployForm({ onDeploySuccess, onGoToFeedback, feedbackDe
                 </div>
                 <div className="field">
                   <label htmlFor="api_key">API key</label>
-                  <input
+                  <PasswordField
                     id="api_key"
-                    type="password"
-                    className="input"
                     required
                     value={form.api_key}
                     onChange={(e) => setForm((f) => ({ ...f, api_key: e.target.value }))}
                   />
                 </div>
+                <div className="field">
+                  <label htmlFor="llm_env_var_name">Environment variable name</label>
+                  <input
+                    id="llm_env_var_name"
+                    type="text"
+                    className="input"
+                    placeholder={form.llm_provider === "other" ? "e.g. MY_PROVIDER_API_KEY" : undefined}
+                    required
+                    value={form.env_var_name}
+                    onChange={(e) => setForm((f) => ({ ...f, env_var_name: e.target.value }))}
+                  />
+                </div>
               </div>
+              <p className="section-hint">
+                Defaults to the standard name for the selected provider — change it if your repo's code expects
+                a different one.
+              </p>
             </section>
 
             <section className="form-section">
@@ -536,6 +574,7 @@ export default function DeployForm({ onDeploySuccess, onGoToFeedback, feedbackDe
             Advanced — additional environment variables
             <span className="chevron" />
           </summary>
+          <p className="section-hint">Only for secrets your repo's code needs — values are masked below.</p>
           <div className="advanced-body">
             {form.env_vars.map((v, i) => (
               <div className="env-row" key={i}>
@@ -546,9 +585,7 @@ export default function DeployForm({ onDeploySuccess, onGoToFeedback, feedbackDe
                   value={v.key}
                   onChange={(e) => updateEnvVar(i, "key", e.target.value)}
                 />
-                <input
-                  type="text"
-                  className="input"
+                <PasswordField
                   placeholder="value"
                   value={v.value}
                   onChange={(e) => updateEnvVar(i, "value", e.target.value)}

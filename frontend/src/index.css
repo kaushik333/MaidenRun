@@ -429,6 +429,31 @@ body {
   cursor: pointer;
 }
 
+.password-field {
+  position: relative;
+}
+
+.password-field .input {
+  padding-right: 2.4rem;
+}
+
+.password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 0.65rem;
+  transform: translateY(-50%);
+  border: none;
+  background: none;
+  padding: 0;
+  display: inline-flex;
+  color: var(--color-text-faint);
+  cursor: pointer;
+}
+
+.password-toggle:hover {
+  color: var(--color-text-muted);
+}
+
 .segmented {
   display: inline-flex;
   padding: 0.25rem;
@@ -509,7 +534,8 @@ body {
   align-items: center;
 }
 
-.env-row .input {
+.env-row .input,
+.env-row .password-field {
   flex: 1;
 }
 

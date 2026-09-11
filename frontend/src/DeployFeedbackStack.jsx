@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { BACKEND_URL } from "./config";
 import CostMonitor from "./CostMonitor.jsx";
 import DeploySteps from "./DeploySteps.jsx";
+import PasswordField from "./PasswordField.jsx";
 
 // Mirrors backend/app/api/deploy.py's AWS_REGIONS — same curated list,
 // duplicated rather than shared across the two independent form components.
@@ -234,10 +235,8 @@ export default function DeployFeedbackStack({ onDeploySuccess, lastAwsRegion }) 
                 </div>
                 <div className="field">
                   <label htmlFor="feedback_secret_access_key">Secret access key</label>
-                  <input
+                  <PasswordField
                     id="feedback_secret_access_key"
-                    type="password"
-                    className="input"
                     value={form.secret_access_key}
                     onChange={(e) => updateField("secret_access_key", e.target.value)}
                   />

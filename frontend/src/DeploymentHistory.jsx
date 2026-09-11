@@ -4,6 +4,7 @@ import { BACKEND_URL } from "./config";
 const DECISION_LABELS = {
   repo_url: "Repo",
   llm_provider: "LLM provider",
+  llm_env_var_name: "LLM env var",
   instance_type: "Instance type",
   ebs_size_gb: "EBS size",
   self_hosted_llm: "Self-hosted LLM",

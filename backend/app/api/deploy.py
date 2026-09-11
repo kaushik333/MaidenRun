@@ -58,8 +58,13 @@ class DeployRequest(BaseModel):
     instance_type: str
     ebs_size_gb: Literal[20, 50, 100]
     instance_name: str | None = None
-    llm_provider: Literal["openai", "anthropic", "azure_openai", "openrouter"] | None = None
+    llm_provider: Literal["openai", "anthropic", "azure_openai", "openrouter", "other"] | None = None
     api_key: str | None = None
+    # Overrides PROVIDER_ENV_VARS' default name for this deploy — different
+    # agent frameworks read different env var names for the same provider
+    # (e.g. OAI_API_KEY instead of OPENAI_API_KEY), so this can't be a fixed
+    # mapping. None means "use the default for llm_provider".
+    env_var_name: str | None = None
     env_vars: list[EnvVar] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -69,9 +74,9 @@ class DeployRequest(BaseModel):
                 raise ValueError(
                     f"instance_type must be one of {GPU_INSTANCE_TYPES} when self_hosted_llm is true"
                 )
-            if self.llm_provider is not None or self.api_key is not None:
+            if self.llm_provider is not None or self.api_key is not None or self.env_var_name is not None:
                 raise ValueError(
-                    "llm_provider and api_key must be omitted when self_hosted_llm is true"
+                    "llm_provider, api_key, and env_var_name must be omitted when self_hosted_llm is true"
                 )
         else:
             if self.instance_type not in CPU_INSTANCE_TYPES:
@@ -82,6 +87,10 @@ class DeployRequest(BaseModel):
                 raise ValueError("llm_provider is required when self_hosted_llm is false")
             if not self.api_key:
                 raise ValueError("api_key is required when self_hosted_llm is false")
+            if self.llm_provider == "other" and not self.env_var_name:
+                # "other" has no sensible default env var name to fall back
+                # to — every other provider does (see PROVIDER_ENV_VARS).
+                raise ValueError("env_var_name is required when llm_provider is 'other'")
         return self
 
 
@@ -222,6 +231,11 @@ def _run_deployment(
                 "repo_url": request.repo_url,
                 "self_hosted_llm": request.self_hosted_llm,
                 "llm_provider": request.llm_provider,
+                "llm_env_var_name": (
+                    None
+                    if request.self_hosted_llm
+                    else request.env_var_name or PROVIDER_ENV_VARS.get(request.llm_provider)
+                ),
                 "instance_type": request.instance_type,
                 "ebs_size_gb": request.ebs_size_gb,
                 "env_var_keys": [ev.key for ev in request.env_vars],
@@ -267,7 +281,8 @@ def deploy(request: DeployRequest, background_tasks: BackgroundTasks) -> DeployA
     # Self-hosted LLM: no provider secret to inject; just whatever advanced env vars were given.
     app_secrets = {ev.key: ev.value for ev in request.env_vars}
     if not request.self_hosted_llm:
-        app_secrets[PROVIDER_ENV_VARS[request.llm_provider]] = request.api_key
+        key_name = request.env_var_name or PROVIDER_ENV_VARS.get(request.llm_provider)
+        app_secrets[key_name] = request.api_key
 
     try:
         app_session = get_session(request.aws.access_key_id, request.aws.secret_access_key, region=request.aws.region)

@@ -16,7 +16,7 @@ function formatElapsed(seconds) {
 // launch time. Shared by both the app deploy and feedback-stack deploy
 // cards; costEstimateUrl's response shape (s3_estimated_usd present or not)
 // decides whether the S3 line renders.
-export default function CostMonitor({ costEstimateUrl, instanceId, instanceName, region }) {
+export default function CostMonitor({ costEstimateUrl, instanceId, instanceName, region, deploymentId }) {
   const [estimate, setEstimate] = useState(null);
   const [now, setNow] = useState(() => Date.now());
   const [terminated, setTerminated] = useState(false);
@@ -57,7 +57,7 @@ export default function CostMonitor({ costEstimateUrl, instanceId, instanceName,
       res = await fetch(`${BACKEND_URL}/terminate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ instance_id: instanceId, region }),
+        body: JSON.stringify({ instance_id: instanceId, region, deployment_id: deploymentId }),
       });
     } catch {
       setError("Could not reach the backend");

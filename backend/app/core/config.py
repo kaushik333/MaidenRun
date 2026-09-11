@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     user_id: str = "local"
     log_level: str = "INFO"
 
+    # durable, file-per-deployment history (see app/core/history.py) —
+    # bind-mounted so it survives container rebuilds, not just restarts
+    deployments_dir: str = "data/deployments"
+
     # aws
     aws_default_region: str = "us-east-1"
     aws_credentials_path: str = str(Path.home() / ".agentdock" / "credentials.json")

@@ -12,6 +12,7 @@ from app.aws.ec2 import HealthCheckTimeoutError, terminate_instance, wait_for_po
 from app.aws.feedback_stack import EBS_SIZE_GB, INSTANCE_TYPE, launch_feedback_stack
 from app.aws.pricing import EC2_HOURLY_RATES, estimate_ec2_cost, estimate_s3_cost
 from app.aws.s3_bundle import BUNDLE_KEY_PREFIX, build_bundle, delete_bundle, ensure_bundle_bucket, upload_bundle
+from app.core import history
 from app.core.config import settings
 from app.core.errors import classify_error
 from app.core.logging import logger
@@ -99,6 +100,7 @@ def _read_status(deployment_id: str) -> FeedbackDeploymentStatus | None:
 def _run_feedback_deployment(
     deployment_id: str,
     session,
+    region: str,
     instance_name: str | None,
     questionnaire_json: str,
 ) -> None:
@@ -146,19 +148,41 @@ def _run_feedback_deployment(
         delete_bundle(session, bucket, key)
         bundle_deleted_at = datetime.now(timezone.utc)
 
+        feedback_form_url = f"http://{feedback_result['public_ip']}:{settings.feedback_form_port}"
+        feedback_dashboard_url = (
+            f"http://{feedback_result['public_ip']}:{settings.feedback_dashboard_port}"
+            f"/?token={feedback_result['dashboard_token']}"
+        )
         with _feedback_deployments_lock:
             _feedback_deployments[deployment_id].result = DeployFeedbackResult(
-                feedback_form_url=f"http://{feedback_result['public_ip']}:{settings.feedback_form_port}",
-                feedback_dashboard_url=(
-                    f"http://{feedback_result['public_ip']}:{settings.feedback_dashboard_port}"
-                    f"/?token={feedback_result['dashboard_token']}"
-                ),
+                feedback_form_url=feedback_form_url,
+                feedback_dashboard_url=feedback_dashboard_url,
                 feedback_instance_id=feedback_result["instance_id"],
                 launched_at=launched_at,
                 bundle_size_bytes=bundle_size_bytes,
                 bundle_uploaded_at=bundle_uploaded_at,
                 bundle_deleted_at=bundle_deleted_at,
             )
+
+        history.record_deployment({
+            "deployment_id": deployment_id,
+            "kind": "feedback",
+            "status": "running",
+            "deployed_at": launched_at.isoformat(),
+            "terminated_at": None,
+            "region": region,
+            "instance_id": feedback_result["instance_id"],
+            "instance_name": instance_name,
+            "links": [
+                {"label": "Feedback form", "url": feedback_form_url},
+                {"label": "Feedback dashboard", "url": feedback_dashboard_url},
+            ],
+            "decisions": {
+                "bundle_size_bytes": bundle_size_bytes,
+                "bundle_uploaded_at": bundle_uploaded_at.isoformat(),
+                "bundle_deleted_at": bundle_deleted_at.isoformat(),
+            },
+        })
     except Exception as exc:  # deliberately broad — terminal handler for the whole background flow
         logger.exception("feedback-stack deployment %s failed", deployment_id)
 
@@ -222,7 +246,12 @@ def deploy_feedback(request: DeployFeedbackRequest, background_tasks: Background
         _feedback_deployments[deployment_id] = _new_feedback_status()
 
     background_tasks.add_task(
-        _run_feedback_deployment, deployment_id, session, request.instance_name, request.questionnaire_json
+        _run_feedback_deployment,
+        deployment_id,
+        session,
+        request.aws.region,
+        request.instance_name,
+        request.questionnaire_json,
     )
     return DeployFeedbackAcceptedResponse(deployment_id=deployment_id)
 
@@ -250,3 +279,32 @@ def deploy_feedback_cost_estimate(deployment_id: str) -> FeedbackCostEstimate:
         instance_type=INSTANCE_TYPE,
         launched_at=result.launched_at,
     )
+
+
+def rehydrate_feedback_deployments() -> None:
+    """Repopulates the in-memory `_feedback_deployments` dict from disk at
+    startup — see rehydrate_agent_deployments() in app/api/deploy.py for why
+    this is needed."""
+    for record in history.list_deployments():
+        if record.get("kind") != "feedback" or record.get("status") != "running":
+            continue
+        deployment_id = record.get("deployment_id")
+        try:
+            links = {link["label"]: link["url"] for link in record.get("links") or []}
+            decisions = record.get("decisions") or {}
+            status = FeedbackDeploymentStatus(
+                steps=dict.fromkeys(FEEDBACK_STEP_IDS, "done"),
+                result=DeployFeedbackResult(
+                    feedback_form_url=links["Feedback form"],
+                    feedback_dashboard_url=links["Feedback dashboard"],
+                    feedback_instance_id=record["instance_id"],
+                    launched_at=record["deployed_at"],
+                    bundle_size_bytes=decisions.get("bundle_size_bytes", 0),
+                    bundle_uploaded_at=decisions.get("bundle_uploaded_at", record["deployed_at"]),
+                    bundle_deleted_at=decisions.get("bundle_deleted_at"),
+                ),
+            )
+            with _feedback_deployments_lock:
+                _feedback_deployments[deployment_id] = status
+        except Exception:
+            logger.exception("failed to rehydrate feedback deployment %s from history", deployment_id)

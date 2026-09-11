@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, model_validator
 from app.aws.credentials import NoCredentialsError, get_session
 from app.aws.ec2 import PROVIDER_ENV_VARS, launch_app_instance, terminate_instance, wait_for_port_health
 from app.aws.pricing import EC2_HOURLY_RATES, estimate_ec2_cost
+from app.core import history
 from app.core.config import settings
 from app.core.errors import classify_error, reraise_as_http_error
 from app.core.logging import logger
@@ -122,6 +123,12 @@ class TerminateRequest(BaseModel):
         "us-east-1", "us-east-2", "us-west-2", "eu-west-1", "eu-central-1",
         "ap-southeast-1", "ap-southeast-2", "ap-northeast-1", "me-central-1",
     ] = "us-east-1"
+    # Present when the caller is terminating from a known deployment (a
+    # fresh CostMonitor or the Deployments history tab) — lets this endpoint
+    # flip that deployment's history record to "terminated". Absent for any
+    # older/other caller that only knows the instance; the instance still
+    # terminates either way, it just won't be reflected in history.
+    deployment_id: str | None = None
 
 
 class TerminateResponse(BaseModel):
@@ -191,14 +198,35 @@ def _run_deployment(
         )
         _set_step(deployment_id, "app_health", "done")
 
+        app_url = f"http://{app_result['public_ip']}:{settings.app_port}"
         with _deployments_lock:
             _deployments[deployment_id].result = DeployResult(
-                app_url=f"http://{app_result['public_ip']}:{settings.app_port}",
+                app_url=app_url,
                 app_instance_id=app_result["instance_id"],
                 instance_type=request.instance_type,
                 ebs_size_gb=request.ebs_size_gb,
                 launched_at=launched_at,
             )
+
+        history.record_deployment({
+            "deployment_id": deployment_id,
+            "kind": "agent",
+            "status": "running",
+            "deployed_at": launched_at.isoformat(),
+            "terminated_at": None,
+            "region": request.aws.region,
+            "instance_id": app_result["instance_id"],
+            "instance_name": request.instance_name,
+            "links": [{"label": "Agent UI", "url": app_url}],
+            "decisions": {
+                "repo_url": request.repo_url,
+                "self_hosted_llm": request.self_hosted_llm,
+                "llm_provider": request.llm_provider,
+                "instance_type": request.instance_type,
+                "ebs_size_gb": request.ebs_size_gb,
+                "env_var_keys": [ev.key for ev in request.env_vars],
+            },
+        })
     except Exception as exc:  # deliberately broad — terminal handler for the whole background flow
         logger.exception("deployment %s failed", deployment_id)
 
@@ -291,4 +319,35 @@ def terminate(request: TerminateRequest) -> TerminateResponse:
     except ClientError as exc:
         reraise_as_http_error(exc)
 
+    if request.deployment_id:
+        history.mark_terminated(request.deployment_id)
+
     return TerminateResponse(status="terminating")
+
+
+def rehydrate_agent_deployments() -> None:
+    """Repopulates the in-memory `_deployments` dict from disk at startup —
+    without this, /status and /cost-estimate would 404 for every deployment
+    made before the last backend restart, even though the EC2 instance is
+    still running (see app/core/history.py)."""
+    for record in history.list_deployments():
+        if record.get("kind") != "agent" or record.get("status") != "running":
+            continue
+        deployment_id = record.get("deployment_id")
+        try:
+            links = record.get("links") or []
+            decisions = record.get("decisions") or {}
+            status = DeploymentStatus(
+                steps=dict.fromkeys(DEPLOY_STEP_IDS, "done"),
+                result=DeployResult(
+                    app_url=links[0]["url"],
+                    app_instance_id=record["instance_id"],
+                    instance_type=decisions.get("instance_type", "unknown"),
+                    ebs_size_gb=decisions.get("ebs_size_gb", 0),
+                    launched_at=record["deployed_at"],
+                ),
+            )
+            with _deployments_lock:
+                _deployments[deployment_id] = status
+        except Exception:
+            logger.exception("failed to rehydrate deployment %s from history", deployment_id)

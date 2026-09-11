@@ -309,6 +309,7 @@ export default function DeployFeedbackStack({ onDeploySuccess, lastAwsRegion }) 
               instanceId={result.feedback_instance_id}
               instanceName={result.instanceName}
               region={result.region}
+              deploymentId={result.deploymentId}
             />
           )}
         </form>

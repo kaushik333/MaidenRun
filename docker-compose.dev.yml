@@ -11,6 +11,7 @@ services:
       - ./backend/app:/app/app
       - ./infra:/app/infra:ro
       - ./logs:/app/logs
+      - ./data:/app/data
 
   frontend:
     build: ./frontend

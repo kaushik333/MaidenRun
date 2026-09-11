@@ -616,6 +616,7 @@ export default function DeployForm({ onDeploySuccess, onGoToFeedback, feedbackDe
             instanceId={result.app_instance_id}
             instanceName={result.instanceName}
             region={result.region}
+            deploymentId={result.deploymentId}
           />
         )}
       </form>

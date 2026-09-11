@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useState } from "react";
 import DeployFeedbackStack from "./DeployFeedbackStack.jsx";
 import DeployForm from "./DeployForm.jsx";
+import DeploymentHistory from "./DeploymentHistory.jsx";
 import { BACKEND_URL } from "./config";
 import "./index.css";
 
@@ -23,6 +24,17 @@ export default function App() {
   const [lastDeploy, setLastDeploy] = useState(null);
   const [feedbackDeploy, setFeedbackDeploy] = useState(null);
   const [theme, setTheme] = useState(getInitialTheme);
+  const [historyVersion, setHistoryVersion] = useState(0);
+
+  function handleAgentDeploySuccess(result) {
+    setLastDeploy(result);
+    setHistoryVersion((v) => v + 1);
+  }
+
+  function handleFeedbackDeploySuccess(result) {
+    setFeedbackDeploy(result);
+    setHistoryVersion((v) => v + 1);
+  }
 
   // useLayoutEffect (not useEffect) so the attribute is set before the
   // browser paints — avoids a flash of the wrong theme on load.
@@ -133,17 +145,32 @@ export default function App() {
             Feedback stack
             {feedbackDeploy && <span className="tab-dot" aria-hidden="true" />}
           </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "history"}
+            className={`segmented-option ${activeTab === "history" ? "is-active" : ""}`}
+            onClick={() => setActiveTab("history")}
+          >
+            Deployments
+          </button>
         </div>
 
         <div hidden={activeTab !== "deploy"}>
           <DeployForm
-            onDeploySuccess={setLastDeploy}
+            onDeploySuccess={handleAgentDeploySuccess}
             onGoToFeedback={() => setActiveTab("feedback")}
             feedbackDeployed={Boolean(feedbackDeploy)}
           />
         </div>
         <div hidden={activeTab !== "feedback"}>
-          <DeployFeedbackStack onDeploySuccess={setFeedbackDeploy} lastAwsRegion={lastDeploy?.region ?? null} />
+          <DeployFeedbackStack
+            onDeploySuccess={handleFeedbackDeploySuccess}
+            lastAwsRegion={lastDeploy?.region ?? null}
+          />
+        </div>
+        <div hidden={activeTab !== "history"}>
+          <DeploymentHistory refreshKey={historyVersion} />
         </div>
       </div>
     </main>

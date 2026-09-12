@@ -8,13 +8,17 @@
   :root {
     --color-bg: #faf9fc;
     --color-surface: #ffffff;
+    --color-surface-muted: #f7f6fb;
     --color-border: #e7e4f0;
     --color-text: #201a2b;
     --color-text-muted: #6b6478;
+    --color-text-faint: #9791a3;
     --color-primary: #7c3aed;
     --color-primary-soft: #f1e9ff;
     --radius-sm: 9px;
+    --radius-md: 13px;
     --radius-lg: 22px;
+    --shadow-card: 0 1px 2px rgba(32, 26, 43, 0.04), 0 20px 40px -14px rgba(76, 29, 149, 0.12);
   }
   * { box-sizing: border-box; }
   body {
@@ -22,52 +26,85 @@
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     color: var(--color-text);
     background: var(--color-bg);
-    padding: 2rem 1.5rem;
+    padding: 2.75rem 1.75rem 3rem;
   }
-  .shell { max-width: 900px; margin: 0 auto; display: flex; flex-direction: column; gap: 1.5rem; }
-  h1 { font-size: 1.4rem; margin: 0; }
-  .meta { color: var(--color-text-muted); font-size: 0.9rem; margin: 0.3rem 0 0; }
-  .card {
-    background: var(--color-surface);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-lg);
-    padding: 1.5rem;
+  .shell { max-width: 1100px; margin: 0 auto; display: flex; flex-direction: column; gap: 1.75rem; }
+  h1 { font-size: 1.55rem; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
+  .meta { color: var(--color-text-muted); font-size: 0.88rem; margin: 0.3rem 0 0; }
+
+  .kpi-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1.1rem; }
+  .kpi-card {
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg); padding: 1.3rem 1.4rem; box-shadow: var(--shadow-card);
   }
-  .summary-grid { display: flex; flex-direction: column; gap: 1.25rem; }
-  .summary-item h3 { margin: 0 0 0.6rem; font-size: 0.95rem; }
-  .bar-row { display: flex; align-items: center; gap: 0.6rem; font-size: 0.85rem; margin-bottom: 0.3rem; }
-  .bar-label { width: 90px; flex-shrink: 0; color: var(--color-text-muted); }
-  .bar-track { flex: 1; background: var(--color-primary-soft); border-radius: 6px; height: 10px; overflow: hidden; }
-  .bar-fill { background: var(--color-primary); height: 100%; }
-  .bar-count { width: 28px; text-align: right; color: var(--color-text-muted); font-size: 0.8rem; }
-  .text-answers { display: flex; flex-direction: column; gap: 0.4rem; }
-  .text-answers p { margin: 0; padding: 0.5rem 0.7rem; background: var(--color-bg); border-radius: var(--radius-sm); font-size: 0.85rem; }
+  .kpi-label { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-text-faint); }
+  .kpi-value { font-size: 1.9rem; font-weight: 700; margin-top: 0.35rem; }
+
+  /* One card template for every question, whatever its type/count/order —
+     a choice question takes one grid column, free text always spans the
+     full row since a list of quotes needs room a half column doesn't give. */
+  .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1.1rem; }
+  .summary-card {
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg); padding: 1.4rem 1.5rem; box-shadow: var(--shadow-card);
+    display: flex; flex-direction: column; gap: 0.9rem;
+  }
+  .summary-card--text { grid-column: 1 / -1; }
+  .summary-card-header { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; }
+  .summary-card-header h3 { margin: 0; font-size: 0.95rem; font-weight: 700; }
+  .summary-average { flex: none; font-size: 1.15rem; font-weight: 700; color: var(--color-primary); }
+
+  .bar-row { display: flex; align-items: center; gap: 0.7rem; }
+  .bar-label {
+    width: 96px; flex-shrink: 0; font-size: 0.8rem; color: var(--color-text-muted);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .bar-track { flex: 1; background: var(--color-surface-muted); border-radius: 6px; height: 12px; overflow: hidden; }
+  .bar-fill { display: block; height: 100%; border-radius: 6px; background: var(--color-primary); }
+  .bar-count { width: 64px; flex-shrink: 0; text-align: right; font-size: 0.78rem; color: var(--color-text-faint); font-variant-numeric: tabular-nums; }
+
+  .quote-list { display: flex; flex-direction: column; gap: 0.6rem; }
+  .quote-list p { margin: 0; padding: 0.8rem 0.95rem; background: var(--color-surface-muted); border-radius: var(--radius-sm); font-size: 0.85rem; line-height: 1.5; }
+
+  .responses-card {
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg); padding: 1.4rem 1.5rem; box-shadow: var(--shadow-card);
+    display: flex; flex-direction: column; gap: 1rem;
+  }
+  .responses-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+  .responses-header h3 { margin: 0; font-size: 0.95rem; font-weight: 700; }
   input#filter {
-    width: 100%; padding: 0.6rem 0.8rem; border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm); font-size: 0.9rem; font-family: inherit;
+    width: 260px; padding: 0.5rem 0.75rem; border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm); font-size: 0.85rem; font-family: inherit;
   }
-  .row { border-bottom: 1px solid var(--color-border); padding: 0.9rem 0; }
-  .row:last-child { border-bottom: none; }
-  .row-time { color: var(--color-text-muted); font-size: 0.8rem; margin-bottom: 0.4rem; }
-  .row-qa { font-size: 0.85rem; margin: 0.15rem 0; }
-  .row-qa strong { font-weight: 600; }
-  .empty { color: var(--color-text-muted); font-size: 0.9rem; margin: 0; }
+  input#filter:focus { outline: none; border-color: var(--color-primary); box-shadow: 0 0 0 3px var(--color-primary-soft); }
+
+  .response-row { border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 0.9rem 1.05rem; display: flex; flex-direction: column; gap: 0.55rem; }
+  .response-time { font-size: 0.75rem; color: var(--color-text-faint); }
+  .response-answers { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0.4rem 1.5rem; }
+  .response-answers p { margin: 0; font-size: 0.83rem; line-height: 1.5; }
+  .response-answers strong { font-weight: 600; color: var(--color-text-muted); }
+
+  .empty { color: var(--color-text-faint); font-size: 0.85rem; margin: 0; }
 </style>
 </head>
 <body>
   <div class="shell">
     <div>
       <h1>Feedback dashboard</h1>
-      <p class="meta" id="count-line">Loading…</p>
+      <p class="meta" id="meta-line">Loading…</p>
     </div>
 
-    <div class="card">
-      <div class="summary-grid" id="summary"></div>
-    </div>
+    <div class="kpi-row" id="kpi-row"></div>
 
-    <div class="card">
-      <input id="filter" type="text" placeholder="Filter by answer text…" />
-      <div id="rows" style="margin-top: 1rem;"></div>
+    <div class="summary-grid" id="summary"></div>
+
+    <div class="responses-card">
+      <div class="responses-header">
+        <h3>Individual responses</h3>
+        <input id="filter" type="text" placeholder="Filter by answer text…" />
+      </div>
+      <div id="rows"></div>
     </div>
   </div>
 
@@ -79,35 +116,76 @@
       return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
     }
 
-    function renderSummary(summary) {
-      const el = document.getElementById("summary");
-      if (!summary.length) {
-        el.innerHTML = '<p class="empty">No submissions yet.</p>';
-        return;
+    function formatRelative(iso) {
+      const diffMs = Date.now() - new Date(iso).getTime();
+      const minutes = Math.round(diffMs / 60000);
+      if (minutes < 1) return "just now";
+      if (minutes < 60) return `${minutes}m ago`;
+      const hours = Math.round(minutes / 60);
+      if (hours < 24) return `${hours}h ago`;
+      return `${Math.round(hours / 24)}d ago`;
+    }
+
+    function renderKpis(rows, summary) {
+      const el = document.getElementById("kpi-row");
+      const lastResponse = rows.length
+        ? formatRelative(rows.reduce((latest, r) => (r.submitted_at > latest ? r.submitted_at : latest), rows[0].submitted_at))
+        : "—";
+      const kpis = [
+        { label: "Total responses", value: rows.length },
+        { label: "Last response", value: lastResponse },
+        { label: "Questions in this form", value: summary.length },
+      ];
+      el.innerHTML = kpis
+        .map((k) => `<div class="kpi-card"><div class="kpi-label">${escapeHtml(k.label)}</div><div class="kpi-value">${escapeHtml(k.value)}</div></div>`)
+        .join("");
+    }
+
+    // One rendering path per question SHAPE (has options, or not) — never
+    // per specific question, count, or position, since the questionnaire
+    // is entirely user-defined and can be any length or mix of types.
+    function renderSummaryCard(q) {
+      if (!q.options) {
+        const quotes = q.text_answers.length
+          ? q.text_answers.map((t) => `<p>${escapeHtml(t)}</p>`).join("")
+          : '<p class="empty">No responses yet.</p>';
+        return `<div class="summary-card summary-card--text">
+          <div class="summary-card-header"><h3>${escapeHtml(q.question)}</h3></div>
+          <div class="quote-list">${quotes}</div>
+        </div>`;
       }
-      el.innerHTML = summary
-        .map((q) => {
-          if (q.options) {
-            const total = Object.values(q.counts).reduce((a, b) => a + b, 0) || 1;
-            const bars = q.options
-              .map((opt) => {
-                const count = q.counts[opt] || 0;
-                const pct = Math.round((count / total) * 100);
-                return `<div class="bar-row">
-                  <span class="bar-label">${escapeHtml(opt)}</span>
-                  <span class="bar-track"><span class="bar-fill" style="width:${pct}%"></span></span>
-                  <span class="bar-count">${count}</span>
-                </div>`;
-              })
-              .join("");
-            return `<div class="summary-item"><h3>${escapeHtml(q.question)}</h3>${bars}</div>`;
-          }
-          const texts = q.text_answers.length
-            ? q.text_answers.map((t) => `<p>${escapeHtml(t)}</p>`).join("")
-            : '<p class="empty">No responses.</p>';
-          return `<div class="summary-item"><h3>${escapeHtml(q.question)}</h3><div class="text-answers">${texts}</div></div>`;
+
+      const total = Object.values(q.counts).reduce((a, b) => a + b, 0) || 1;
+      const allNumeric = q.options.every((opt) => opt.trim() !== "" && !Number.isNaN(Number(opt)));
+      let averageHtml = "";
+      if (allNumeric) {
+        const weightedSum = q.options.reduce((sum, opt) => sum + Number(opt) * (q.counts[opt] || 0), 0);
+        averageHtml = `<span class="summary-average">${(weightedSum / total).toFixed(1)}</span>`;
+      }
+
+      const bars = q.options
+        .map((opt) => {
+          const count = q.counts[opt] || 0;
+          const pct = Math.round((count / total) * 100);
+          return `<div class="bar-row">
+            <span class="bar-label" title="${escapeHtml(opt)}">${escapeHtml(opt)}</span>
+            <span class="bar-track"><span class="bar-fill" style="width:${pct}%"></span></span>
+            <span class="bar-count">${count} (${pct}%)</span>
+          </div>`;
         })
         .join("");
+
+      return `<div class="summary-card">
+        <div class="summary-card-header"><h3>${escapeHtml(q.question)}</h3>${averageHtml}</div>
+        ${bars}
+      </div>`;
+    }
+
+    function renderSummary(summary) {
+      const el = document.getElementById("summary");
+      el.innerHTML = summary.length
+        ? summary.map(renderSummaryCard).join("")
+        : '<p class="empty">No submissions yet.</p>';
     }
 
     function renderRows(rows) {
@@ -118,13 +196,13 @@
       }
       el.innerHTML = rows
         .map((row) => {
-          const qa = row.answers
-            .map(
-              (a) =>
-                `<p class="row-qa"><strong>${escapeHtml(a.question)}:</strong> ${escapeHtml(a.answer || "(no answer)")}</p>`
-            )
+          const answers = row.answers
+            .map((a) => `<p><strong>${escapeHtml(a.question)}:</strong> ${escapeHtml(a.answer || "(no answer)")}</p>`)
             .join("");
-          return `<div class="row"><div class="row-time">${new Date(row.submitted_at).toLocaleString()}</div>${qa}</div>`;
+          return `<div class="response-row">
+            <span class="response-time">${new Date(row.submitted_at).toLocaleString()}</span>
+            <div class="response-answers">${answers}</div>
+          </div>`;
         })
         .join("");
     }
@@ -146,8 +224,9 @@
       })
       .then((data) => {
         allRows = data.rows;
-        document.getElementById("count-line").textContent =
+        document.getElementById("meta-line").textContent =
           `${data.rows.length} submission${data.rows.length === 1 ? "" : "s"}`;
+        renderKpis(data.rows, data.summary);
         renderSummary(data.summary);
         renderRows(allRows);
       })

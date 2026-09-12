@@ -1,12 +1,44 @@
 import { useEffect, useState } from "react";
 import "./index.css";
 
+// A numeric rating scale (e.g. 1-5, or 1-10) gets a nicer connected-dot
+// control than plain pills — detected purely from the option values
+// themselves, so it applies to any scale a questionnaire defines, not a
+// specific one. No assumption is made about what the endpoints "mean"
+// (there's no such field in the schema) — the numbers speak for themselves.
+function isNumericScale(options) {
+  return options.every((opt) => opt.trim() !== "" && !Number.isNaN(Number(opt)));
+}
+
 function QuestionField({ question, onChange }) {
   if (question.options) {
+    const groupProps = { role: "radiogroup", "aria-label": question.question };
+
+    if (isNumericScale(question.options)) {
+      return (
+        <div className="scale" {...groupProps}>
+          <div className="scale-track">
+            {question.options.map((opt) => (
+              <label key={opt} className={`scale-dot ${question.answer === opt ? "is-selected" : ""}`}>
+                <input
+                  type="radio"
+                  name={question.question}
+                  value={opt}
+                  checked={question.answer === opt}
+                  onChange={() => onChange(opt)}
+                />
+                {opt}
+              </label>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
     return (
-      <div className="options" role="radiogroup" aria-label={question.question}>
+      <div className="segmented" {...groupProps}>
         {question.options.map((opt) => (
-          <label key={opt} className={`option ${question.answer === opt ? "is-selected" : ""}`}>
+          <label key={opt} className={`segmented-option ${question.answer === opt ? "is-selected" : ""}`}>
             <input
               type="radio"
               name={question.question}
@@ -93,35 +125,53 @@ export default function App() {
   if (status === "done") {
     return (
       <main className="page">
-        <div className="card">
-          <h1 className="title">Thank you</h1>
-          <p className="hint">Your feedback has been recorded.</p>
+        <div className="card-shell">
+          <div className="card">
+            <div className="card-body">
+              <h1 className="title">Thank you</h1>
+              <p className="hint">Your feedback has been recorded.</p>
+            </div>
+          </div>
         </div>
       </main>
     );
   }
 
+  const requiredQuestions = (questions || []).filter((q) => !q.optional);
+  const answeredCount = requiredQuestions.filter((q) => q.answer).length;
+  const progressPct = requiredQuestions.length
+    ? Math.round((answeredCount / requiredQuestions.length) * 100)
+    : 100;
+
   return (
     <main className="page">
-      <div className="card">
-        <h1 className="title">Feedback</h1>
-        <form className="form" onSubmit={handleSubmit}>
-          {(questions || []).map((q, i) => (
-            <div className="field" key={i}>
-              <label className="label">
-                {q.question}
-                {q.optional && <span className="hint"> (optional)</span>}
-              </label>
-              <QuestionField question={q} onChange={(v) => setAnswer(i, v)} />
-            </div>
-          ))}
+      <div className="card-shell">
+        <div className="card">
+          <div className="progress-track">
+            <div className="progress-fill" style={{ width: `${progressPct}%` }} />
+          </div>
+          <div className="card-body">
+            <h1 className="title">Feedback</h1>
+            <form className="form" onSubmit={handleSubmit}>
+              {(questions || []).map((q, i) => (
+                <div className="field" key={i}>
+                  <label className="label">
+                    {q.question}
+                    {q.optional && <span className="hint"> (optional)</span>}
+                  </label>
+                  <QuestionField question={q} onChange={(v) => setAnswer(i, v)} />
+                </div>
+              ))}
 
-          {error && <p className="error">{error}</p>}
+              {error && <p className="error">{error}</p>}
 
-          <button type="submit" className="submit-btn" disabled={status === "submitting"}>
-            {status === "submitting" ? "Submitting…" : "Submit feedback"}
-          </button>
-        </form>
+              <button type="submit" className="submit-btn" disabled={status === "submitting"}>
+                {status === "submitting" ? "Submitting…" : "Submit feedback"}
+              </button>
+            </form>
+          </div>
+        </div>
+        <p className="footer-note">Your response is anonymous and only visible to the person who deployed this agent.</p>
       </div>
     </main>
   );

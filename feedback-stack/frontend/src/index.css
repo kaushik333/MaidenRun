@@ -1,11 +1,14 @@
 :root {
   --color-bg: #faf9fc;
   --color-surface: #ffffff;
+  --color-surface-muted: #f7f6fb;
   --color-border: #e7e4f0;
   --color-text: #201a2b;
   --color-text-muted: #6b6478;
+  --color-text-faint: #9791a3;
 
   --color-primary: #7c3aed;
+  --color-primary-deep: #5b21b6;
   --color-primary-soft: #f1e9ff;
   --color-primary-soft-border: #ddccfb;
   --color-danger: #d8394a;
@@ -16,7 +19,7 @@
   --radius-md: 13px;
   --radius-lg: 22px;
 
-  --gradient-brand: linear-gradient(135deg, #7c3aed 0%, #fb6f92 55%, #f6ad37 100%);
+  --gradient-accent: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-deep) 100%);
   --shadow-card: 0 1px 2px rgba(32, 26, 43, 0.04), 0 24px 48px -12px rgba(76, 29, 149, 0.14);
 }
 
@@ -39,14 +42,42 @@ body {
   padding: 2rem 1rem;
 }
 
-.card {
+.card-shell {
   width: 100%;
   max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.card {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+.progress-track {
+  height: 4px;
+  background: var(--color-surface-muted);
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--gradient-accent);
+  transition: width 0.25s ease;
+}
+
+.card-body {
   padding: 2.1rem;
+}
+
+.footer-note {
+  margin: 0;
+  text-align: center;
+  font-size: 0.78rem;
+  color: var(--color-text-faint);
 }
 
 .title {
@@ -64,7 +95,7 @@ body {
 .field {
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
+  gap: 0.7rem;
 }
 
 .label {
@@ -78,35 +109,75 @@ body {
   font-size: 0.85rem;
 }
 
-.options {
-  display: flex;
+/* ---- segmented pill control, for short/categorical choices ---- */
+
+.segmented {
+  display: inline-flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
+  padding: 3px;
+  background: var(--color-surface-muted);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  gap: 3px;
 }
 
-.option {
+.segmented-option {
   display: inline-flex;
   align-items: center;
-  gap: 0.4rem;
-  padding: 0.5rem 0.9rem;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  padding: 0.55rem 1.1rem;
+  border-radius: 9px;
   cursor: pointer;
-  font-size: 0.9rem;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
-.option input {
+.segmented-option input {
   position: absolute;
   opacity: 0;
   pointer-events: none;
 }
 
-.option.is-selected {
-  background: var(--color-primary-soft);
-  border-color: var(--color-primary-soft-border);
-  color: var(--color-primary);
-  font-weight: 600;
+.segmented-option.is-selected {
+  background: var(--gradient-accent);
+  color: #fff;
+}
+
+/* ---- connected-dot scale, for numeric rating questions ---- */
+
+.scale-track {
+  display: inline-flex;
+  gap: 0.6rem;
+}
+
+.scale-dot {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 2px solid var(--color-border);
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--color-text-muted);
+  background: var(--color-surface);
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.scale-dot input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.scale-dot.is-selected {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
 }
 
 .textarea {
@@ -120,7 +191,8 @@ body {
 }
 
 .textarea:focus,
-.option:focus-within {
+.segmented-option:focus-within,
+.scale-dot:focus-within {
   outline: 2px solid var(--color-primary);
   outline-offset: 1px;
 }
@@ -134,7 +206,7 @@ body {
   font-size: 1rem;
   font-weight: 700;
   color: #fff;
-  background: var(--gradient-brand);
+  background: var(--gradient-accent);
   border: none;
   border-radius: var(--radius-md);
   cursor: pointer;

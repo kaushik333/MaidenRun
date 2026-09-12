@@ -104,6 +104,47 @@ def test_deploy_with_no_llm_config_accepted(_mock_validate, _mock_health) -> Non
 @mock_aws
 @patch("app.api.deploy.wait_for_port_health", side_effect=_no_op_health)
 @patch("app.api.deploy.validate_repo", return_value=VALID_COMPOSE_REPO)
+def test_deploy_passes_github_token_to_validate_repo(mock_validate, _mock_health) -> None:
+    _bootstrap_moto_account()
+    payload = {**EXTERNAL_LLM_PAYLOAD, "github_token": "ghp_secrettoken"}
+    _deploy_and_wait(payload)
+    mock_validate.assert_called_once_with(payload["repo_url"], "ghp_secrettoken")
+
+
+@mock_aws
+@patch("app.api.deploy.wait_for_port_health", side_effect=_no_op_health)
+@patch("app.api.deploy.validate_repo", return_value=VALID_COMPOSE_REPO)
+def test_deploy_stores_github_token_separately_and_never_in_history(_mock_validate, _mock_health) -> None:
+    _bootstrap_moto_account()
+    payload = {**EXTERNAL_LLM_PAYLOAD, "github_token": "ghp_secrettoken"}
+    _response, status = _deploy_and_wait(payload)
+    instance_id = status["result"]["app_instance_id"]
+
+    session = boto3.Session(
+        aws_access_key_id="test", aws_secret_access_key="test", region_name=settings.aws_default_region
+    )
+    from app.aws.ec2 import REPO_TOKEN_PARAM_NAME
+
+    deployment_id = _response.json()["deployment_id"]
+    token_param = session.client("ssm").get_parameter(
+        Name=f"/agentdock/{deployment_id}/{REPO_TOKEN_PARAM_NAME}", WithDecryption=True
+    )
+    assert token_param["Parameter"]["Value"] == "ghp_secrettoken"
+
+    user_data = session.client("ec2").describe_instance_attribute(InstanceId=instance_id, Attribute="userData")
+    import base64
+
+    decoded = base64.b64decode(user_data["UserData"]["Value"]).decode()
+    assert "ghp_secrettoken" not in decoded
+
+    history_response = client.get("/deployments")
+    for record in history_response.json():
+        assert "ghp_secrettoken" not in str(record)
+
+
+@mock_aws
+@patch("app.api.deploy.wait_for_port_health", side_effect=_no_op_health)
+@patch("app.api.deploy.validate_repo", return_value=VALID_COMPOSE_REPO)
 def test_deploy_launches_app_instance_and_returns_real_link(_mock_validate, mock_health) -> None:
     _bootstrap_moto_account()
     _response, status = _deploy_and_wait(EXTERNAL_LLM_PAYLOAD)

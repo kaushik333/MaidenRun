@@ -11,6 +11,10 @@ SECURITY_GROUP_NAME = "agentdock-app"
 INSTANCE_ROLE_NAME = "agentdock-instance-role"
 AMI_PARAMETER = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
 PARAMETER_NAMESPACE = "/agentdock"
+# Reserved name, kept out of the agent's own secrets dict so a private-repo
+# token is never exported into the agent's process environment alongside
+# its real env vars.
+REPO_TOKEN_PARAM_NAME = "__repo_token"
 
 DOCKER_INSTALL = (
     "dnf install -y docker git\n"
@@ -123,7 +127,14 @@ def latest_al2023_ami(session: boto3.Session) -> tuple[str, str]:
     return ami_id, image["RootDeviceName"]
 
 
-def render_user_data(repo_url: str, entry_point: str, secret_names: list[str], deployment_id: str, region: str) -> str:
+def render_user_data(
+    repo_url: str,
+    entry_point: str,
+    secret_names: list[str],
+    deployment_id: str,
+    region: str,
+    needs_repo_token: bool = False,
+) -> str:
     """Builds the boot script: install Docker, fetch secrets from SSM, clone, run.
 
     Secret *values* never appear here — only the parameter names and the
@@ -148,12 +159,28 @@ def render_user_data(repo_url: str, entry_point: str, secret_names: list[str], d
             f"docker run -d --restart unless-stopped -p 8001:8001 {env_flags} agent-app"
         )
 
+    if needs_repo_token:
+        # Same reasoning as every other secret: user-data is visible to
+        # anyone who can call describe-instance-attribute on this instance,
+        # so the token is fetched from SSM at boot and substituted into the
+        # clone URL here in bash — it never appears in this script's own
+        # (Python-side, static) text.
+        token_param = f"{PARAMETER_NAMESPACE}/{deployment_id}/{REPO_TOKEN_PARAM_NAME}"
+        scheme, sep, rest = repo_url.partition("://")
+        clone_lines = (
+            f'REPO_TOKEN="$(aws ssm get-parameter --name "{token_param}" --with-decryption '
+            f'--query Parameter.Value --output text --region {region})"\n'
+            f'git clone --depth 1 "{scheme}{sep}${{REPO_TOKEN}}@{rest}" /opt/agent-repo\n'
+        )
+    else:
+        clone_lines = f'git clone --depth 1 "{repo_url}" /opt/agent-repo\n'
+
     return (
         "#!/bin/bash\n"
         "set -euo pipefail\n\n"
         f"{DOCKER_INSTALL}\n\n"
         f"{export_lines}\n\n"
-        f'git clone --depth 1 "{repo_url}" /opt/agent-repo\n'
+        f"{clone_lines}"
         "cd /opt/agent-repo\n\n"
         f"{run_command}\n"
     )
@@ -209,6 +236,7 @@ def launch_app_instance(
     ebs_size_gb: int,
     secrets: dict[str, str],
     instance_name: str | None = None,
+    github_token: str | None = None,
 ) -> dict:
     """Provisions the app EC2 instance and returns {"instance_id", "public_ip"}.
 
@@ -218,6 +246,11 @@ def launch_app_instance(
     in the background after this returns.
     """
     write_secret_parameters(session, deployment_id, secrets)
+    if github_token:
+        # Written separately from `secrets` — it authenticates the clone,
+        # it is not one of the agent's own env vars, and must never be
+        # exported into the agent's process alongside them.
+        write_secret_parameters(session, deployment_id, {REPO_TOKEN_PARAM_NAME: github_token})
     security_group_id = ensure_app_security_group(session)
     ami_id, root_device_name = latest_al2023_ami(session)
     user_data = render_user_data(
@@ -226,6 +259,7 @@ def launch_app_instance(
         secret_names=list(secrets.keys()),
         deployment_id=deployment_id,
         region=session.region_name,
+        needs_repo_token=bool(github_token),
     )
 
     ec2 = session.client("ec2")

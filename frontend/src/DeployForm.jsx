@@ -42,6 +42,7 @@ function freshSteps() {
 
 const initialState = {
   repo_url: "",
+  github_token: "",
   aws: { access_key_id: "", secret_access_key: "", region: AWS_REGIONS[0] },
   instance_type: CPU_INSTANCE_TYPES[0],
   ebs_size_gb: EBS_SIZES[0],
@@ -78,6 +79,11 @@ export default function DeployForm({ onDeploySuccess, onGoToFeedback, feedbackDe
     setRepoCheck(IDLE_REPO_CHECK);
   }
 
+  function updateGithubToken(value) {
+    setForm((f) => ({ ...f, github_token: value }));
+    setRepoCheck(IDLE_REPO_CHECK);
+  }
+
   async function checkRepo() {
     setRepoCheck({ status: "checking", entry_point: null, error: null });
 
@@ -86,7 +92,7 @@ export default function DeployForm({ onDeploySuccess, onGoToFeedback, feedbackDe
       res = await fetch(`${BACKEND_URL}/validate-repo`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ repo_url: form.repo_url }),
+        body: JSON.stringify({ repo_url: form.repo_url, github_token: form.github_token.trim() || null }),
       });
     } catch {
       setRepoCheck({ status: "invalid", entry_point: null, error: "Could not reach the backend" });
@@ -217,6 +223,7 @@ export default function DeployForm({ onDeploySuccess, onGoToFeedback, feedbackDe
     const payload = {
       ...formForBackend,
       instance_name: app_instance_name.trim() || null,
+      github_token: form.github_token.trim() || null,
       env_vars: form.env_vars.filter((v) => v.key.trim() !== ""),
       api_key_name: form.api_key_name.trim() || null,
       api_key_value: form.api_key_value || null,
@@ -314,6 +321,15 @@ export default function DeployForm({ onDeploySuccess, onGoToFeedback, feedbackDe
             {repoCheck.status === "invalid" && (
               <p className="field-status field-status--error">✗ {repoCheck.error}</p>
             )}
+          </div>
+          <div className="field">
+            <label htmlFor="github_token">Personal access token</label>
+            <PasswordField
+              id="github_token"
+              placeholder="Only needed for a private repo"
+              value={form.github_token}
+              onChange={(e) => updateGithubToken(e.target.value)}
+            />
           </div>
         </section>
 

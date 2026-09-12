@@ -19,6 +19,7 @@ const ACTIVE_POLL_INTERVAL_MS = 3000;
 
 const DECISION_LABELS = {
   repo_url: "Repo",
+  private_repo: "Private repo",
   api_key_name: "API key env var",
   base_url_name: "Base URL env var",
   instance_type: "Instance type",
@@ -44,7 +45,9 @@ function formatTimestamp(iso) {
 }
 
 function DecisionsList({ decisions }) {
-  const entries = Object.entries(decisions || {}).filter(([key, value]) => DECISION_LABELS[key] && value != null);
+  const entries = Object.entries(decisions || {}).filter(
+    ([key, value]) => DECISION_LABELS[key] && value != null && value !== false
+  );
   const envKeys = decisions?.env_var_keys;
 
   if (entries.length === 0 && !envKeys?.length) return null;

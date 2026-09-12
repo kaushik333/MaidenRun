@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field
 
 class ValidateRepoRequest(BaseModel):
     repo_url: str = Field(min_length=1)
+    github_token: str | None = None
 
 
 class ValidateRepoResponse(BaseModel):

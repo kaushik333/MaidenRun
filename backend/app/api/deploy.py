@@ -51,6 +51,11 @@ class EnvVar(BaseModel):
 
 class DeployRequest(BaseModel):
     repo_url: str = Field(min_length=1)
+    # A GitHub personal access token for a private repo_url — optional,
+    # treated exactly like every other secret here: never logged, never
+    # persisted to the deployment history, delivered to the instance only
+    # via the same SSM-parameter mechanism as the agent's own secrets.
+    github_token: str | None = None
     aws: AwsCredentials
     instance_type: str
     ebs_size_gb: Literal[20, 50, 100]
@@ -180,6 +185,7 @@ def _run_deployment(
             ebs_size_gb=request.ebs_size_gb,
             secrets=app_secrets,
             instance_name=request.instance_name,
+            github_token=request.github_token,
         )
         launched_at = datetime.now(timezone.utc)
         _set_step(deployment_id, "app_compute", "done")
@@ -212,6 +218,7 @@ def _run_deployment(
             "links": [{"label": "Agent UI", "url": app_url}],
             "decisions": {
                 "repo_url": request.repo_url,
+                "private_repo": bool(request.github_token),
                 "api_key_name": request.api_key_name,
                 "base_url_name": request.base_url_name,
                 "instance_type": request.instance_type,
@@ -252,7 +259,7 @@ def _run_deployment(
 
 @router.post("/deploy", response_model=DeployAcceptedResponse, status_code=202)
 def deploy(request: DeployRequest, background_tasks: BackgroundTasks) -> DeployAcceptedResponse:
-    validation = validate_repo(request.repo_url)
+    validation = validate_repo(request.repo_url, request.github_token)
     if not validation.valid:
         raise HTTPException(status_code=400, detail=validation.error)
 

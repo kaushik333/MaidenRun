@@ -57,6 +57,29 @@ def test_clone_repo_reports_git_failure(tmp_path: Path) -> None:
     assert "Could not clone" in error
 
 
+def test_clone_repo_with_token_uses_authenticated_url() -> None:
+    with patch("app.validation.validator.subprocess.run") as mock_run:
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stderr = ""
+        clone_repo("https://github.com/kaushik/agent", Path("/tmp/wherever"), github_token="ghp_secrettoken")
+
+    cloned_url = mock_run.call_args.args[0][4]  # ["git", "clone", "--depth", "1", <url>, dest]
+    assert cloned_url == "https://ghp_secrettoken@github.com/kaushik/agent"
+
+
+def test_clone_repo_error_never_contains_raw_token(tmp_path: Path) -> None:
+    with patch("app.validation.validator.subprocess.run") as mock_run:
+        mock_run.return_value.returncode = 128
+        mock_run.return_value.stderr = "fatal: repository 'https://ghp_secrettoken@github.com/x/y' not found"
+        error = clone_repo(
+            "https://github.com/x/y", tmp_path / "repo", github_token="ghp_secrettoken"
+        )
+
+    assert "ghp_secrettoken" not in error
+    assert "https://github.com/x/y" in error  # the original, unauthenticated URL is still reported
+    assert "***" in error
+
+
 def test_clone_repo_reports_timeout_instead_of_crashing(tmp_path: Path) -> None:
     with patch(
         "app.validation.validator.subprocess.run",
@@ -78,3 +101,15 @@ def test_validate_repo_endpoint_reports_clone_failure() -> None:
 def test_validate_repo_endpoint_rejects_empty_repo_url() -> None:
     response = client.post("/validate-repo", json={"repo_url": ""})
     assert response.status_code == 422
+
+
+def test_validate_repo_endpoint_passes_github_token_through() -> None:
+    with patch("app.api.validate_repo.validate_repo") as mock_validate:
+        mock_validate.return_value.valid = True
+        mock_validate.return_value.entry_point = "compose"
+        mock_validate.return_value.error = None
+        client.post(
+            "/validate-repo",
+            json={"repo_url": "https://github.com/x/y", "github_token": "ghp_secrettoken"},
+        )
+    mock_validate.assert_called_once_with("https://github.com/x/y", "ghp_secrettoken")

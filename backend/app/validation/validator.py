@@ -11,11 +11,23 @@ RESERVED_FEEDBACK_PORTS = {8002: "feedback capture", 8003: "the feedback dashboa
 CLONE_TIMEOUT_SECONDS = 300
 
 
-def clone_repo(repo_url: str, dest: Path) -> str | None:
+def _authenticated_url(repo_url: str, github_token: str | None) -> str:
+    """Inserts a GitHub personal access token into the URL the way GitHub's
+    own HTTPS auth expects it (`https://<token>@github.com/...`). Only ever
+    used for the actual `git` subprocess call — every error path below
+    reports the original, unauthenticated repo_url instead."""
+    if not github_token:
+        return repo_url
+    scheme, sep, rest = repo_url.partition("://")
+    return f"{scheme}{sep}{github_token}@{rest}" if sep else repo_url
+
+
+def clone_repo(repo_url: str, dest: Path, github_token: str | None = None) -> str | None:
     """Shallow-clones repo_url into dest. Returns an error message, or None on success."""
+    clone_url = _authenticated_url(repo_url, github_token)
     try:
         result = subprocess.run(
-            ["git", "clone", "--depth", "1", repo_url, str(dest)],
+            ["git", "clone", "--depth", "1", clone_url, str(dest)],
             capture_output=True,
             text=True,
             timeout=CLONE_TIMEOUT_SECONDS,
@@ -26,7 +38,13 @@ def clone_repo(repo_url: str, dest: Path) -> str | None:
         return f"Could not run git to clone {repo_url}: {exc}"
 
     if result.returncode != 0:
-        return f"Could not clone {repo_url}: {result.stderr.strip()}"
+        stderr = result.stderr.strip()
+        if github_token:
+            # git itself sometimes echoes the URL it was given back in its
+            # own error text (e.g. "repository 'https://TOKEN@...' not
+            # found") — scrub it out even though we never embed it ourselves.
+            stderr = stderr.replace(github_token, "***")
+        return f"Could not clone {repo_url}: {stderr}"
     return None
 
 
@@ -115,10 +133,10 @@ def validate_repo_dir(repo_dir: Path) -> ValidateRepoResponse:
     )
 
 
-def validate_repo(repo_url: str) -> ValidateRepoResponse:
+def validate_repo(repo_url: str, github_token: str | None = None) -> ValidateRepoResponse:
     with tempfile.TemporaryDirectory() as tmp:
         dest = Path(tmp) / "repo"
-        clone_error = clone_repo(repo_url, dest)
+        clone_error = clone_repo(repo_url, dest, github_token)
         if clone_error:
             return ValidateRepoResponse(valid=False, error=clone_error)
         return validate_repo_dir(dest)

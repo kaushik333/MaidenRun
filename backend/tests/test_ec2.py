@@ -81,6 +81,34 @@ def test_render_user_data_never_contains_raw_secret_value():
     assert "--with-decryption" in user_data
 
 
+def test_render_user_data_with_repo_token_never_contains_raw_token():
+    user_data = ec2.render_user_data(
+        repo_url=REPO_URL,
+        entry_point="compose",
+        secret_names=[],
+        deployment_id=DEPLOYMENT_ID,
+        region=settings.aws_default_region,
+        needs_repo_token=True,
+    )
+
+    assert "aws ssm get-parameter" in user_data
+    assert f"{ec2.PARAMETER_NAMESPACE}/{DEPLOYMENT_ID}/{ec2.REPO_TOKEN_PARAM_NAME}" in user_data
+    assert 'git clone --depth 1 "https://${REPO_TOKEN}@github.com/kaushik/agent"' in user_data
+
+
+def test_render_user_data_without_repo_token_clones_plain_url():
+    user_data = ec2.render_user_data(
+        repo_url=REPO_URL,
+        entry_point="compose",
+        secret_names=[],
+        deployment_id=DEPLOYMENT_ID,
+        region=settings.aws_default_region,
+    )
+
+    assert f'git clone --depth 1 "{REPO_URL}"' in user_data
+    assert "REPO_TOKEN" not in user_data
+
+
 def test_render_user_data_compose_runs_docker_compose_up():
     user_data = ec2.render_user_data(
         repo_url=REPO_URL, entry_point="compose", secret_names=[], deployment_id=DEPLOYMENT_ID, region="us-east-1"
@@ -234,6 +262,36 @@ def test_launch_app_instance_security_group_has_only_8001(aws_session):
     group = client.describe_security_groups(GroupIds=sg_ids)["SecurityGroups"][0]
     assert len(group["IpPermissions"]) == 1
     assert group["IpPermissions"][0]["FromPort"] == 8001
+
+
+@mock_aws
+def test_launch_app_instance_stores_repo_token_separately_from_secrets(aws_session):
+    create_instance_profile(aws_session)
+    ec2.launch_app_instance(
+        aws_session,
+        deployment_id=DEPLOYMENT_ID,
+        repo_url=REPO_URL,
+        entry_point="compose",
+        instance_type="t3.small",
+        ebs_size_gb=20,
+        secrets=SECRETS,
+        github_token="ghp_secrettoken",
+    )
+
+    ssm = aws_session.client("ssm")
+    token_param = ssm.get_parameter(
+        Name=f"/agentdock/{DEPLOYMENT_ID}/{ec2.REPO_TOKEN_PARAM_NAME}", WithDecryption=True
+    )
+    assert token_param["Parameter"]["Value"] == "ghp_secrettoken"
+
+    # It must never be exported into the agent's own process environment.
+    instance = aws_session.client("ec2").describe_instances()["Reservations"][0]["Instances"][0]
+    user_data = base64.b64decode(
+        aws_session.client("ec2")
+        .describe_instance_attribute(InstanceId=instance["InstanceId"], Attribute="userData")["UserData"]["Value"]
+    ).decode()
+    assert f"export {ec2.REPO_TOKEN_PARAM_NAME}" not in user_data
+    assert "ghp_secrettoken" not in user_data
 
 
 @mock_aws

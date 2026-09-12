@@ -12,15 +12,6 @@ INSTANCE_ROLE_NAME = "agentdock-instance-role"
 AMI_PARAMETER = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
 PARAMETER_NAMESPACE = "/agentdock"
 
-# Deterministic provider -> env-var-name mapping (see IDEA.md's "API key ->
-# environment variable mapping is a fixed convention" security bullet).
-PROVIDER_ENV_VARS = {
-    "openai": "OPENAI_API_KEY",
-    "anthropic": "ANTHROPIC_API_KEY",
-    "azure_openai": "AZURE_OPENAI_API_KEY",
-    "openrouter": "OPENROUTER_API_KEY",
-}
-
 DOCKER_INSTALL = (
     "dnf install -y docker git\n"
     "systemctl enable --now docker\n"

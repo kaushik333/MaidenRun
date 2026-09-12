@@ -5,10 +5,8 @@ import CostMonitor from "./CostMonitor.jsx";
 import DeploySteps from "./DeploySteps.jsx";
 import PasswordField from "./PasswordField.jsx";
 
-const GPU_INSTANCE_TYPES = ["g4dn.xlarge", "g5.xlarge"];
 const CPU_INSTANCE_TYPES = ["t3.small", "t3.medium", "m5.xlarge"];
 const EBS_SIZES = [20, 50, 100];
-const LLM_PROVIDERS = ["openai", "anthropic", "azure_openai", "openrouter", "other"];
 // Curated, not exhaustive — mirrors backend/app/api/deploy.py's AWS_REGIONS.
 const AWS_REGIONS = [
   "us-east-1",
@@ -21,28 +19,6 @@ const AWS_REGIONS = [
   "ap-northeast-1",
   "me-central-1",
 ];
-
-const PROVIDER_LABELS = {
-  openai: "OpenAI",
-  anthropic: "Anthropic",
-  azure_openai: "Azure OpenAI",
-  openrouter: "OpenRouter",
-  other: "Other",
-};
-
-// Defaults only, not the only option — mirrors backend/app/aws/ec2.py's
-// PROVIDER_ENV_VARS. Different agent frameworks read different names for
-// the same provider (e.g. OAI_API_KEY instead of OPENAI_API_KEY), so the
-// form lets this be overridden per deploy rather than hardcoding it.
-// "other" deliberately has no entry — there's no sensible default for a
-// provider not in this list, and new ones show up too often to keep
-// chasing with a fixed dropdown.
-const PROVIDER_ENV_VAR_DEFAULTS = {
-  openai: "OPENAI_API_KEY",
-  anthropic: "ANTHROPIC_API_KEY",
-  azure_openai: "AZURE_OPENAI_API_KEY",
-  openrouter: "OPENROUTER_API_KEY",
-};
 
 // validate/ports/aws_creds resolve together from POST /deploy's single
 // synchronous response (fast: repo validation + local credential lookup,
@@ -67,13 +43,13 @@ function freshSteps() {
 const initialState = {
   repo_url: "",
   aws: { access_key_id: "", secret_access_key: "", region: AWS_REGIONS[0] },
-  self_hosted_llm: false,
   instance_type: CPU_INSTANCE_TYPES[0],
   ebs_size_gb: EBS_SIZES[0],
   app_instance_name: "",
-  llm_provider: LLM_PROVIDERS[0],
-  api_key: "",
-  env_var_name: PROVIDER_ENV_VAR_DEFAULTS[LLM_PROVIDERS[0]],
+  api_key_name: "",
+  api_key_value: "",
+  base_url_name: "",
+  base_url_value: "",
   env_vars: [],
 };
 
@@ -149,17 +125,6 @@ export default function DeployForm({ onDeploySuccess, onGoToFeedback, feedbackDe
 
   function updateAws(field, value) {
     setForm((f) => ({ ...f, aws: { ...f.aws, [field]: value } }));
-  }
-
-  function toggleSelfHosted(value) {
-    setForm((f) => ({
-      ...f,
-      self_hosted_llm: value,
-      instance_type: value ? GPU_INSTANCE_TYPES[0] : CPU_INSTANCE_TYPES[0],
-      llm_provider: value ? null : LLM_PROVIDERS[0],
-      api_key: value ? "" : f.api_key,
-      env_var_name: value ? "" : f.env_var_name || PROVIDER_ENV_VAR_DEFAULTS[LLM_PROVIDERS[0]],
-    }));
   }
 
   function updateEnvVar(index, field, value) {
@@ -253,9 +218,10 @@ export default function DeployForm({ onDeploySuccess, onGoToFeedback, feedbackDe
       ...formForBackend,
       instance_name: app_instance_name.trim() || null,
       env_vars: form.env_vars.filter((v) => v.key.trim() !== ""),
-      llm_provider: form.self_hosted_llm ? null : form.llm_provider,
-      api_key: form.self_hosted_llm ? null : form.api_key,
-      env_var_name: form.self_hosted_llm ? null : form.env_var_name,
+      api_key_name: form.api_key_name.trim() || null,
+      api_key_value: form.api_key_value || null,
+      base_url_name: form.base_url_name.trim() || null,
+      base_url_value: form.base_url_value.trim() || null,
     };
 
     setStepStatus("validate", "active");
@@ -287,9 +253,11 @@ export default function DeployForm({ onDeploySuccess, onGoToFeedback, feedbackDe
         ? data.detail.map((d) => d.msg).join("; ")
         : data?.detail || data?.error || "Deploy failed";
 
-      if (res.status === 400) {
-        // validate_repo() failed — covers both repo structure and the
-        // reserved-port checks, so both steps stay tied to this one outcome.
+      if (res.status === 400 || res.status === 422) {
+        // 400 = validate_repo() failed (repo structure or reserved ports).
+        // 422 = the request itself was malformed (e.g. an LLM env var name
+        // given without its value) — a form mistake, not an AWS problem,
+        // so it belongs here too rather than under "Authorize AWS access."
         setStepStatus("validate", "error", detail);
       } else {
         // Repo validation passed; no AWS credentials were cached and none
@@ -399,175 +367,105 @@ export default function DeployForm({ onDeploySuccess, onGoToFeedback, feedbackDe
         </section>
 
         <section className="form-section">
-          <h2 className="section-title">Does your code spin up its own LLM?</h2>
-          <div className="segmented" role="group" aria-label="Self-hosted LLM">
-            <button
-              type="button"
-              className={`segmented-option ${!form.self_hosted_llm ? "is-active" : ""}`}
-              onClick={() => toggleSelfHosted(false)}
-            >
-              No — external API
-            </button>
-            <button
-              type="button"
-              className={`segmented-option ${form.self_hosted_llm ? "is-active" : ""}`}
-              onClick={() => toggleSelfHosted(true)}
-            >
-              Yes — self-hosted
-            </button>
+          <h2 className="section-title">LLM connection</h2>
+          <p className="section-hint">
+            However your agent reaches its model — a provider's API, or one you host yourself — tell us the
+            environment variable names your code reads and we'll set them. Leave any of these blank if your
+            agent doesn't need them.
+          </p>
+          <div className="field-row">
+            <div className="field">
+              <label htmlFor="api_key_name">API key env var name</label>
+              <input
+                id="api_key_name"
+                type="text"
+                className="input"
+                placeholder="e.g. OPENAI_API_KEY"
+                value={form.api_key_name}
+                onChange={(e) => setForm((f) => ({ ...f, api_key_name: e.target.value }))}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="api_key_value">API key value</label>
+              <PasswordField
+                id="api_key_value"
+                value={form.api_key_value}
+                onChange={(e) => setForm((f) => ({ ...f, api_key_value: e.target.value }))}
+              />
+            </div>
+          </div>
+          <div className="field-row">
+            <div className="field">
+              <label htmlFor="base_url_name">Base URL env var name</label>
+              <input
+                id="base_url_name"
+                type="text"
+                className="input"
+                placeholder="e.g. OPENAI_BASE_URL"
+                value={form.base_url_name}
+                onChange={(e) => setForm((f) => ({ ...f, base_url_name: e.target.value }))}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="base_url_value">Base URL value</label>
+              <input
+                id="base_url_value"
+                type="text"
+                className="input"
+                placeholder="e.g. https://your-server:8000/v1"
+                value={form.base_url_value}
+                onChange={(e) => setForm((f) => ({ ...f, base_url_value: e.target.value }))}
+              />
+            </div>
           </div>
         </section>
 
-        {form.self_hosted_llm ? (
-          <section className="form-section">
-            <h2 className="section-title">Compute</h2>
-            <div className="field-row">
-              <div className="field">
-                <label htmlFor="instance_type">EC2 instance (GPU)</label>
-                <select
-                  id="instance_type"
-                  className="select"
-                  value={form.instance_type}
-                  onChange={(e) => setForm((f) => ({ ...f, instance_type: e.target.value }))}
-                >
-                  {GPU_INSTANCE_TYPES.map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="field">
-                <label htmlFor="ebs_size_gb">EBS storage</label>
-                <select
-                  id="ebs_size_gb"
-                  className="select"
-                  value={form.ebs_size_gb}
-                  onChange={(e) => setForm((f) => ({ ...f, ebs_size_gb: Number(e.target.value) }))}
-                >
-                  {EBS_SIZES.map((s) => (
-                    <option key={s} value={s}>
-                      {s} GB
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="field">
-                <label htmlFor="app_instance_name">Instance name</label>
-                <input
-                  id="app_instance_name"
-                  type="text"
-                  className="input"
-                  placeholder="e.g. my-agent"
-                  value={form.app_instance_name}
-                  onChange={(e) => setForm((f) => ({ ...f, app_instance_name: e.target.value }))}
-                />
-              </div>
+        <section className="form-section">
+          <h2 className="section-title">Compute</h2>
+          <div className="field-row">
+            <div className="field">
+              <label htmlFor="instance_type">EC2 instance</label>
+              <select
+                id="instance_type"
+                className="select"
+                value={form.instance_type}
+                onChange={(e) => setForm((f) => ({ ...f, instance_type: e.target.value }))}
+              >
+                {CPU_INSTANCE_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
             </div>
-          </section>
-        ) : (
-          <>
-            <section className="form-section">
-              <h2 className="section-title">LLM provider</h2>
-              <div className="field-row">
-                <div className="field">
-                  <label htmlFor="llm_provider">Provider</label>
-                  <select
-                    id="llm_provider"
-                    className="select"
-                    value={form.llm_provider}
-                    onChange={(e) => {
-                      const provider = e.target.value;
-                      setForm((f) => ({
-                        ...f,
-                        llm_provider: provider,
-                        env_var_name: PROVIDER_ENV_VAR_DEFAULTS[provider] ?? "",
-                      }));
-                    }}
-                  >
-                    {LLM_PROVIDERS.map((p) => (
-                      <option key={p} value={p}>
-                        {PROVIDER_LABELS[p]}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="field">
-                  <label htmlFor="api_key">API key</label>
-                  <PasswordField
-                    id="api_key"
-                    required
-                    value={form.api_key}
-                    onChange={(e) => setForm((f) => ({ ...f, api_key: e.target.value }))}
-                  />
-                </div>
-                <div className="field">
-                  <label htmlFor="llm_env_var_name">Environment variable name</label>
-                  <input
-                    id="llm_env_var_name"
-                    type="text"
-                    className="input"
-                    placeholder={form.llm_provider === "other" ? "e.g. MY_PROVIDER_API_KEY" : undefined}
-                    required
-                    value={form.env_var_name}
-                    onChange={(e) => setForm((f) => ({ ...f, env_var_name: e.target.value }))}
-                  />
-                </div>
-              </div>
-              <p className="section-hint">
-                Defaults to the standard name for the selected provider — change it if your repo's code expects
-                a different one.
-              </p>
-            </section>
-
-            <section className="form-section">
-              <h2 className="section-title">Compute</h2>
-              <div className="field-row">
-                <div className="field">
-                  <label htmlFor="instance_type">EC2 instance</label>
-                  <select
-                    id="instance_type"
-                    className="select"
-                    value={form.instance_type}
-                    onChange={(e) => setForm((f) => ({ ...f, instance_type: e.target.value }))}
-                  >
-                    {CPU_INSTANCE_TYPES.map((t) => (
-                      <option key={t} value={t}>
-                        {t}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="field">
-                  <label htmlFor="ebs_size_gb">EBS storage</label>
-                  <select
-                    id="ebs_size_gb"
-                    className="select"
-                    value={form.ebs_size_gb}
-                    onChange={(e) => setForm((f) => ({ ...f, ebs_size_gb: Number(e.target.value) }))}
-                  >
-                    {EBS_SIZES.map((s) => (
-                      <option key={s} value={s}>
-                        {s} GB
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="field">
-                  <label htmlFor="app_instance_name">Instance name</label>
-                  <input
-                    id="app_instance_name"
-                    type="text"
-                    className="input"
-                    placeholder="e.g. my-agent"
-                    value={form.app_instance_name}
-                    onChange={(e) => setForm((f) => ({ ...f, app_instance_name: e.target.value }))}
-                  />
-                </div>
-              </div>
-            </section>
-          </>
-        )}
+            <div className="field">
+              <label htmlFor="ebs_size_gb">EBS storage</label>
+              <select
+                id="ebs_size_gb"
+                className="select"
+                value={form.ebs_size_gb}
+                onChange={(e) => setForm((f) => ({ ...f, ebs_size_gb: Number(e.target.value) }))}
+              >
+                {EBS_SIZES.map((s) => (
+                  <option key={s} value={s}>
+                    {s} GB
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="app_instance_name">Instance name</label>
+              <input
+                id="app_instance_name"
+                type="text"
+                className="input"
+                placeholder="e.g. my-agent"
+                value={form.app_instance_name}
+                onChange={(e) => setForm((f) => ({ ...f, app_instance_name: e.target.value }))}
+              />
+            </div>
+          </div>
+        </section>
 
         <details className="advanced">
           <summary>

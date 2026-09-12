@@ -22,20 +22,11 @@ AWS = {"access_key_id": "AKIA_TEST", "secret_access_key": "shh"}
 EXTERNAL_LLM_PAYLOAD = {
     "repo_url": "https://github.com/kaushik/agent",
     "aws": AWS,
-    "self_hosted_llm": False,
     "instance_type": "t3.small",
     "ebs_size_gb": 20,
-    "llm_provider": "openai",
-    "api_key": "sk-test",
+    "api_key_name": "OPENAI_API_KEY",
+    "api_key_value": "sk-test",
     "env_vars": [{"key": "PINECONE_API_KEY", "value": "pc-test"}],
-}
-
-SELF_HOSTED_LLM_PAYLOAD = {
-    "repo_url": "https://github.com/kaushik/agent",
-    "aws": AWS,
-    "self_hosted_llm": True,
-    "instance_type": "g4dn.xlarge",
-    "ebs_size_gb": 50,
 }
 
 VALID_COMPOSE_REPO = ValidateRepoResponse(valid=True, entry_point="compose")
@@ -79,9 +70,32 @@ def _deploy_and_wait(payload: dict, headers: dict | None = None) -> tuple[object
 @mock_aws
 @patch("app.api.deploy.wait_for_port_health", side_effect=_no_op_health)
 @patch("app.api.deploy.validate_repo", return_value=VALID_COMPOSE_REPO)
-def test_deploy_openrouter_provider_accepted(_mock_validate, _mock_health) -> None:
+def test_deploy_with_base_url_override_accepted(_mock_validate, _mock_health) -> None:
     _bootstrap_moto_account()
-    payload = {**EXTERNAL_LLM_PAYLOAD, "llm_provider": "openrouter", "api_key": "or-test"}
+    payload = {
+        **EXTERNAL_LLM_PAYLOAD,
+        "base_url_name": "OPENAI_BASE_URL",
+        "base_url_value": "https://my-self-hosted-llm.example.com/v1",
+    }
+    _response, status = _deploy_and_wait(payload)
+    assert status["error"] is None
+    assert status["result"] is not None
+
+
+@mock_aws
+@patch("app.api.deploy.wait_for_port_health", side_effect=_no_op_health)
+@patch("app.api.deploy.validate_repo", return_value=VALID_COMPOSE_REPO)
+def test_deploy_with_no_llm_config_accepted(_mock_validate, _mock_health) -> None:
+    """Every LLM-connection field is optional — a repo that doesn't need any
+    of them (already configured elsewhere, or not LLM-based at all) must
+    still be deployable."""
+    _bootstrap_moto_account()
+    payload = {
+        "repo_url": "https://github.com/kaushik/agent",
+        "aws": AWS,
+        "instance_type": "t3.small",
+        "ebs_size_gb": 20,
+    }
     _response, status = _deploy_and_wait(payload)
     assert status["error"] is None
     assert status["result"] is not None
@@ -134,17 +148,6 @@ def test_deploy_passes_the_chosen_region_to_get_session(_mock_get_session, _mock
     response = client.post("/deploy", json=payload)
     assert response.status_code == 202
     _mock_get_session.assert_called_once_with("AKIA_TEST", "shh", region="eu-west-1")
-
-
-@mock_aws
-@patch("app.api.deploy.wait_for_port_health", side_effect=_no_op_health)
-@patch("app.api.deploy.validate_repo", return_value=VALID_COMPOSE_REPO)
-def test_deploy_self_hosted_llm_launches_instance_and_returns_its_ip(_mock_validate, _mock_health) -> None:
-    _bootstrap_moto_account()
-    _response, status = _deploy_and_wait(SELF_HOSTED_LLM_PAYLOAD)
-    assert status["error"] is None
-    assert status["result"]["app_url"].startswith("http://")
-    assert status["result"]["app_url"].endswith(":8001")
 
 
 @mock_aws
@@ -259,31 +262,33 @@ def test_deploy_status_returns_404_for_unknown_deployment_id() -> None:
     assert response.status_code == 404
 
 
-def test_deploy_external_llm_missing_api_key_rejected() -> None:
-    payload = {**EXTERNAL_LLM_PAYLOAD, "api_key": None}
+def test_deploy_api_key_name_without_value_rejected() -> None:
+    payload = {**EXTERNAL_LLM_PAYLOAD, "api_key_name": "OPENAI_API_KEY", "api_key_value": None}
     response = client.post("/deploy", json=payload)
     assert response.status_code == 422
 
 
-def test_deploy_external_llm_missing_provider_rejected() -> None:
-    payload = {**EXTERNAL_LLM_PAYLOAD, "llm_provider": None}
+def test_deploy_api_key_value_without_name_rejected() -> None:
+    payload = {**EXTERNAL_LLM_PAYLOAD, "api_key_name": None, "api_key_value": "sk-test"}
     response = client.post("/deploy", json=payload)
     assert response.status_code == 422
 
 
-def test_deploy_self_hosted_llm_rejects_cpu_instance_type() -> None:
-    payload = {**SELF_HOSTED_LLM_PAYLOAD, "instance_type": "t3.small"}
+def test_deploy_base_url_name_without_value_rejected() -> None:
+    payload = {**EXTERNAL_LLM_PAYLOAD, "base_url_name": "OPENAI_BASE_URL", "base_url_value": None}
     response = client.post("/deploy", json=payload)
     assert response.status_code == 422
 
 
-def test_deploy_self_hosted_llm_rejects_api_key_present() -> None:
-    payload = {**SELF_HOSTED_LLM_PAYLOAD, "llm_provider": "openai", "api_key": "sk-test"}
+def test_deploy_base_url_value_without_name_rejected() -> None:
+    payload = {**EXTERNAL_LLM_PAYLOAD, "base_url_name": None, "base_url_value": "https://example.com/v1"}
     response = client.post("/deploy", json=payload)
     assert response.status_code == 422
 
 
-def test_deploy_external_llm_rejects_gpu_instance_type() -> None:
+def test_deploy_rejects_gpu_instance_type() -> None:
+    # GPU instances no longer have any path to be provisioned — hosting an
+    # LLM is entirely the user's own responsibility now, wherever they do it.
     payload = {**EXTERNAL_LLM_PAYLOAD, "instance_type": "g4dn.xlarge"}
     response = client.post("/deploy", json=payload)
     assert response.status_code == 422

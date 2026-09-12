@@ -19,11 +19,10 @@ const ACTIVE_POLL_INTERVAL_MS = 3000;
 
 const DECISION_LABELS = {
   repo_url: "Repo",
-  llm_provider: "LLM provider",
-  llm_env_var_name: "LLM env var",
+  api_key_name: "API key env var",
+  base_url_name: "Base URL env var",
   instance_type: "Instance type",
   ebs_size_gb: "EBS size",
-  self_hosted_llm: "Self-hosted LLM",
 };
 
 function formatRelative(iso) {
@@ -45,7 +44,7 @@ function formatTimestamp(iso) {
 }
 
 function DecisionsList({ decisions }) {
-  const entries = Object.entries(decisions || {}).filter(([key]) => DECISION_LABELS[key]);
+  const entries = Object.entries(decisions || {}).filter(([key, value]) => DECISION_LABELS[key] && value != null);
   const envKeys = decisions?.env_var_keys;
 
   if (entries.length === 0 && !envKeys?.length) return null;

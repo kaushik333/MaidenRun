@@ -8,7 +8,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, Field, model_validator
 
 from app.aws.credentials import NoCredentialsError, get_session
-from app.aws.ec2 import PROVIDER_ENV_VARS, launch_app_instance, terminate_instance, wait_for_port_health
+from app.aws.ec2 import launch_app_instance, terminate_instance, wait_for_port_health
 from app.aws.pricing import EC2_HOURLY_RATES, estimate_ec2_cost
 from app.core import history
 from app.core.config import settings
@@ -16,9 +16,7 @@ from app.core.errors import classify_error, reraise_as_http_error
 from app.core.logging import logger
 from app.validation.validator import validate_repo
 
-GPU_INSTANCE_TYPES = ("g4dn.xlarge", "g5.xlarge")
 CPU_INSTANCE_TYPES = ("t3.small", "t3.medium", "m5.xlarge")
-LLM_PROVIDERS = ("openai", "anthropic", "azure_openai", "openrouter")
 # Curated, not exhaustive — same "no confusing options" reasoning as the
 # instance-type/EBS-size dropdowns. IAM/the instance role are global and
 # work in any of these; only the default-VPC requirement is per-region.
@@ -54,43 +52,28 @@ class EnvVar(BaseModel):
 class DeployRequest(BaseModel):
     repo_url: str = Field(min_length=1)
     aws: AwsCredentials
-    self_hosted_llm: bool
     instance_type: str
     ebs_size_gb: Literal[20, 50, 100]
     instance_name: str | None = None
-    llm_provider: Literal["openai", "anthropic", "azure_openai", "openrouter", "other"] | None = None
-    api_key: str | None = None
-    # Overrides PROVIDER_ENV_VARS' default name for this deploy — different
-    # agent frameworks read different env var names for the same provider
-    # (e.g. OAI_API_KEY instead of OPENAI_API_KEY), so this can't be a fixed
-    # mapping. None means "use the default for llm_provider".
-    env_var_name: str | None = None
+    # No provider concept at all — the agent connects to whatever LLM
+    # endpoint it wants (a real provider's API, or one the user hosts
+    # themselves elsewhere; provisioning compute for the LLM itself is out
+    # of scope here). Both pairs are optional: some self-hosted endpoints
+    # need no key, some agents need no override of their default base URL.
+    api_key_name: str | None = None
+    api_key_value: str | None = None
+    base_url_name: str | None = None
+    base_url_value: str | None = None
     env_vars: list[EnvVar] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def check_branch_fields(self) -> "DeployRequest":
-        if self.self_hosted_llm:
-            if self.instance_type not in GPU_INSTANCE_TYPES:
-                raise ValueError(
-                    f"instance_type must be one of {GPU_INSTANCE_TYPES} when self_hosted_llm is true"
-                )
-            if self.llm_provider is not None or self.api_key is not None or self.env_var_name is not None:
-                raise ValueError(
-                    "llm_provider, api_key, and env_var_name must be omitted when self_hosted_llm is true"
-                )
-        else:
-            if self.instance_type not in CPU_INSTANCE_TYPES:
-                raise ValueError(
-                    f"instance_type must be one of {CPU_INSTANCE_TYPES} when self_hosted_llm is false"
-                )
-            if self.llm_provider is None:
-                raise ValueError("llm_provider is required when self_hosted_llm is false")
-            if not self.api_key:
-                raise ValueError("api_key is required when self_hosted_llm is false")
-            if self.llm_provider == "other" and not self.env_var_name:
-                # "other" has no sensible default env var name to fall back
-                # to — every other provider does (see PROVIDER_ENV_VARS).
-                raise ValueError("env_var_name is required when llm_provider is 'other'")
+    def check_fields(self) -> "DeployRequest":
+        if self.instance_type not in CPU_INSTANCE_TYPES:
+            raise ValueError(f"instance_type must be one of {CPU_INSTANCE_TYPES}")
+        if bool(self.api_key_name) != bool(self.api_key_value):
+            raise ValueError("api_key_name and api_key_value must be provided together")
+        if bool(self.base_url_name) != bool(self.base_url_value):
+            raise ValueError("base_url_name and base_url_value must be provided together")
         return self
 
 
@@ -229,13 +212,8 @@ def _run_deployment(
             "links": [{"label": "Agent UI", "url": app_url}],
             "decisions": {
                 "repo_url": request.repo_url,
-                "self_hosted_llm": request.self_hosted_llm,
-                "llm_provider": request.llm_provider,
-                "llm_env_var_name": (
-                    None
-                    if request.self_hosted_llm
-                    else request.env_var_name or PROVIDER_ENV_VARS.get(request.llm_provider)
-                ),
+                "api_key_name": request.api_key_name,
+                "base_url_name": request.base_url_name,
                 "instance_type": request.instance_type,
                 "ebs_size_gb": request.ebs_size_gb,
                 "env_var_keys": [ev.key for ev in request.env_vars],
@@ -278,11 +256,11 @@ def deploy(request: DeployRequest, background_tasks: BackgroundTasks) -> DeployA
     if not validation.valid:
         raise HTTPException(status_code=400, detail=validation.error)
 
-    # Self-hosted LLM: no provider secret to inject; just whatever advanced env vars were given.
     app_secrets = {ev.key: ev.value for ev in request.env_vars}
-    if not request.self_hosted_llm:
-        key_name = request.env_var_name or PROVIDER_ENV_VARS.get(request.llm_provider)
-        app_secrets[key_name] = request.api_key
+    if request.api_key_name and request.api_key_value:
+        app_secrets[request.api_key_name] = request.api_key_value
+    if request.base_url_name and request.base_url_value:
+        app_secrets[request.base_url_name] = request.base_url_value
 
     try:
         app_session = get_session(request.aws.access_key_id, request.aws.secret_access_key, region=request.aws.region)

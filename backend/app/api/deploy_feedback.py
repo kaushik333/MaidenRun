@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Literal
 
+from botocore.exceptions import ClientError
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, Field
 
@@ -11,10 +12,17 @@ from app.aws.credentials import NoCredentialsError, get_session
 from app.aws.ec2 import HealthCheckTimeoutError, terminate_instance, wait_for_port_health
 from app.aws.feedback_stack import EBS_SIZE_GB, INSTANCE_TYPE, launch_feedback_stack
 from app.aws.pricing import EC2_HOURLY_RATES, estimate_ec2_cost, estimate_s3_cost
-from app.aws.s3_bundle import BUNDLE_KEY_PREFIX, build_bundle, delete_bundle, ensure_bundle_bucket, upload_bundle
+from app.aws.s3_bundle import (
+    BUNDLE_KEY_PREFIX,
+    build_bundle,
+    cleanup_bundle_bucket,
+    delete_bundle,
+    ensure_bundle_bucket,
+    upload_bundle,
+)
 from app.core import history
 from app.core.config import settings
-from app.core.errors import classify_error
+from app.core.errors import classify_error, reraise_as_http_error
 from app.core.logging import logger
 
 router = APIRouter()
@@ -95,6 +103,15 @@ def _read_status(deployment_id: str) -> FeedbackDeploymentStatus | None:
     with _feedback_deployments_lock:
         status = _feedback_deployments.get(deployment_id)
         return status.model_copy(deep=True) if status else None
+
+
+def has_active_deployment() -> bool:
+    """True while any feedback-stack deployment is still mid-flight (has
+    neither succeeded nor failed yet) — used to block S3 bucket cleanup so
+    it can never race a deploy that's actively uploading to or reading from
+    that same bucket."""
+    with _feedback_deployments_lock:
+        return any(s.result is None and s.error is None for s in _feedback_deployments.values())
 
 
 def _run_feedback_deployment(
@@ -279,6 +296,56 @@ def deploy_feedback_cost_estimate(deployment_id: str) -> FeedbackCostEstimate:
         instance_type=INSTANCE_TYPE,
         launched_at=result.launched_at,
     )
+
+
+class FeedbackActiveStatus(BaseModel):
+    active: bool
+
+
+@router.get("/deploy-feedback/active", response_model=FeedbackActiveStatus)
+def feedback_deployment_active() -> FeedbackActiveStatus:
+    return FeedbackActiveStatus(active=has_active_deployment())
+
+
+class BucketCleanupRequest(BaseModel):
+    region: Literal[
+        "us-east-1", "us-east-2", "us-west-2", "eu-west-1", "eu-central-1",
+        "ap-southeast-1", "ap-southeast-2", "ap-northeast-1", "me-central-1",
+    ] = "us-east-1"
+
+
+class BucketCleanupResponse(BaseModel):
+    bucket: str
+    existed: bool
+    objects_deleted: int
+
+
+@router.post("/deploy-feedback/cleanup-bucket", response_model=BucketCleanupResponse)
+def cleanup_bucket(request: BucketCleanupRequest) -> BucketCleanupResponse:
+    # Re-checked here, not just left to the frontend's disabled button — a
+    # click can race a deploy that started a moment earlier, and this is the
+    # one check that actually prevents deleting a bucket a background task
+    # is currently uploading to or reading from.
+    if has_active_deployment():
+        raise HTTPException(
+            status_code=409,
+            detail="A feedback-stack deployment is currently in progress — try again once it finishes.",
+        )
+
+    # No access key/secret here on purpose — same reasoning as /terminate:
+    # reauthentication for an action after the initial deploy should never
+    # require re-pasting the key.
+    try:
+        session = get_session(region=request.region)
+    except NoCredentialsError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+    try:
+        result = cleanup_bundle_bucket(session)
+    except ClientError as exc:
+        reraise_as_http_error(exc)
+
+    return BucketCleanupResponse(**result)
 
 
 def rehydrate_feedback_deployments() -> None:

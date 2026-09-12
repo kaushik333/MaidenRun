@@ -1,6 +1,22 @@
 import { useEffect, useState } from "react";
 import { BACKEND_URL } from "./config";
 
+// Mirrors backend/app/api/deploy.py's AWS_REGIONS — same curated list,
+// duplicated the same way DeployForm.jsx and DeployFeedbackStack.jsx do.
+const AWS_REGIONS = [
+  "us-east-1",
+  "us-east-2",
+  "us-west-2",
+  "eu-west-1",
+  "eu-central-1",
+  "ap-southeast-1",
+  "ap-southeast-2",
+  "ap-northeast-1",
+  "me-central-1",
+];
+
+const ACTIVE_POLL_INTERVAL_MS = 3000;
+
 const DECISION_LABELS = {
   repo_url: "Repo",
   llm_provider: "LLM provider",
@@ -169,6 +185,157 @@ function DeploymentRow({ record, onChanged }) {
   );
 }
 
+function BucketCleanup({ defaultRegion }) {
+  const [region, setRegion] = useState(defaultRegion);
+  const [regionTouched, setRegionTouched] = useState(false);
+  const [active, setActive] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [cleaning, setCleaning] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+
+  // Keep the region synced to the most recent feedback deploy once
+  // deployment history actually loads (this mounts before that first fetch
+  // resolves) — but stop overriding it the moment the user picks one.
+  useEffect(() => {
+    if (!regionTouched) setRegion(defaultRegion);
+  }, [defaultRegion, regionTouched]);
+
+  // Polls whether a feedback-stack deploy is currently mid-flight so the
+  // button stays disabled for the whole window it could race one — not
+  // just at the moment it's clicked.
+  useEffect(() => {
+    let cancelled = false;
+    function poll() {
+      fetch(`${BACKEND_URL}/deploy-feedback/active`)
+        .then((res) => res.json())
+        .then((data) => {
+          if (!cancelled) setActive(Boolean(data.active));
+        })
+        .catch(() => {});
+    }
+    poll();
+    const interval = setInterval(poll, ACTIVE_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, []);
+
+  async function confirmCleanup() {
+    setCleaning(true);
+    setError(null);
+    setResult(null);
+
+    let res;
+    try {
+      res = await fetch(`${BACKEND_URL}/deploy-feedback/cleanup-bucket`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ region }),
+      });
+    } catch {
+      setError("Could not reach the backend");
+      setCleaning(false);
+      return;
+    }
+
+    let data;
+    try {
+      data = await res.json();
+    } catch {
+      data = null;
+    }
+
+    if (!res.ok) {
+      setError(data?.detail || "Cleanup failed");
+      setCleaning(false);
+      return;
+    }
+
+    setResult(data);
+    setCleaning(false);
+    setConfirming(false);
+  }
+
+  return (
+    <section className="form-section">
+      <div className="section-heading">
+        <h2 className="section-title">S3 cleanup</h2>
+        <span className="section-hint">
+          Feedback-stack bundle uploads relay through one S3 bucket per AWS account, normally emptied and left
+          in place after every deploy. Use this if you suspect one was left behind — it deletes the bucket
+          entirely, not just its contents, so nothing keeps quietly costing storage.
+        </span>
+      </div>
+
+      <div className="field-row">
+        <div className="field">
+          <label htmlFor="cleanup_region">Region</label>
+          <select
+            id="cleanup_region"
+            className="input"
+            value={region}
+            onChange={(e) => {
+              setRegion(e.target.value);
+              setRegionTouched(true);
+            }}
+          >
+            {AWS_REGIONS.map((r) => (
+              <option key={r} value={r}>
+                {r}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {!confirming && (
+        <button
+          type="button"
+          className="terminate-btn"
+          disabled={active}
+          title={active ? "A feedback-stack deployment is in progress — try again once it finishes." : undefined}
+          onClick={() => setConfirming(true)}
+        >
+          Delete S3 bucket
+        </button>
+      )}
+
+      {confirming && (
+        <div className="terminate-confirm-row">
+          <span className="terminate-confirm-text">
+            Delete the feedback-stack relay bucket in <strong>{region}</strong>, if one exists? This can't be
+            undone — it's recreated automatically the next time you deploy the feedback stack.
+          </span>
+          <div className="terminate-confirm-actions">
+            <button
+              type="button"
+              className="terminate-btn terminate-btn--danger"
+              disabled={cleaning}
+              onClick={confirmCleanup}
+            >
+              {cleaning ? "Deleting…" : "Confirm delete"}
+            </button>
+            <button type="button" className="link-btn" disabled={cleaning} onClick={() => setConfirming(false)}>
+              Cancel
+            </button>
+          </div>
+          {error && <p className="terminate-error">{error}</p>}
+        </div>
+      )}
+
+      {result && !confirming && (
+        <p className="field-status field-status--ok">
+          {result.existed
+            ? `✓ Deleted bucket ${result.bucket} (${result.objects_deleted} leftover object${result.objects_deleted === 1 ? "" : "s"} removed first).`
+            : `✓ No bucket found for this account/region — nothing to clean up.`}
+        </p>
+      )}
+    </section>
+  );
+}
+
 export default function DeploymentHistory({ refreshKey }) {
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -191,6 +358,7 @@ export default function DeploymentHistory({ refreshKey }) {
 
   const running = records.filter((r) => r.status === "running");
   const terminated = records.filter((r) => r.status === "terminated");
+  const defaultCleanupRegion = records.find((r) => r.kind === "feedback")?.region || AWS_REGIONS[0];
 
   return (
     <div className="card-wrap">
@@ -231,6 +399,8 @@ export default function DeploymentHistory({ refreshKey }) {
               </div>
             </section>
           )}
+
+          <BucketCleanup defaultRegion={defaultCleanupRegion} />
         </div>
       </div>
     </div>

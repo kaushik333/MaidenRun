@@ -111,3 +111,36 @@ def delete_bundle(session: boto3.Session, bucket: str, key: str) -> None:
         logger.info("deleted feedback-stack bundle s3://%s/%s", bucket, key)
     except ClientError:
         logger.exception("could not delete feedback-stack bundle s3://%s/%s", bucket, key)
+
+
+def cleanup_bundle_bucket(session: boto3.Session) -> dict:
+    """Empties and deletes the whole relay bucket for this account, not just
+    its objects — deliberately, so nothing is left behind to be forgotten
+    about and quietly accrue storage cost. Safe to call any time nothing is
+    actively deploying (callers must check has_active_deployment() first) —
+    ensure_bundle_bucket() recreates it lazily on the next feedback-stack
+    deploy, so this never breaks a future one, only one already in flight
+    right now.
+    """
+    bucket_name = f"{BUCKET_NAME_PREFIX}-{session.client('sts').get_caller_identity()['Account']}"
+    s3 = session.client("s3")
+
+    try:
+        s3.head_bucket(Bucket=bucket_name)
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] == "404":
+            return {"bucket": bucket_name, "existed": False, "objects_deleted": 0}
+        raise
+
+    objects_deleted = 0
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket_name):
+        contents = page.get("Contents", [])
+        if not contents:
+            continue
+        s3.delete_objects(Bucket=bucket_name, Delete={"Objects": [{"Key": o["Key"]} for o in contents]})
+        objects_deleted += len(contents)
+
+    s3.delete_bucket(Bucket=bucket_name)
+    logger.info("deleted S3 bucket %s (%d leftover object(s) removed first)", bucket_name, objects_deleted)
+    return {"bucket": bucket_name, "existed": True, "objects_deleted": objects_deleted}

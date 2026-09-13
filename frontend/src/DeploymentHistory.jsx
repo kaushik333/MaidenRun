@@ -67,7 +67,7 @@ function DecisionsList({ decisions }) {
   );
 }
 
-function DeploymentRow({ record, onChanged }) {
+function DeploymentRow({ record, onChanged, onTerminated }) {
   const [confirming, setConfirming] = useState(false);
   const [terminating, setTerminating] = useState(false);
   const [error, setError] = useState(null);
@@ -109,6 +109,10 @@ function DeploymentRow({ record, onChanged }) {
     setTerminating(false);
     setConfirming(false);
     onChanged();
+    // Tells App.jsx so a CostMonitor showing this same deployment elsewhere
+    // (the Deploy or Feedback stack tab) flips to "terminated" too, instead
+    // of continuing to poll cost-estimate as if it were still running.
+    onTerminated?.(record.deployment_id);
   }
 
   return (
@@ -338,7 +342,7 @@ function BucketCleanup({ defaultRegion }) {
   );
 }
 
-export default function DeploymentHistory({ refreshKey }) {
+export default function DeploymentHistory({ refreshKey, onTerminated }) {
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -385,7 +389,7 @@ export default function DeploymentHistory({ refreshKey }) {
               <h2 className="section-title">Running</h2>
               <div className="history-list">
                 {running.map((r) => (
-                  <DeploymentRow key={r.deployment_id} record={r} onChanged={load} />
+                  <DeploymentRow key={r.deployment_id} record={r} onChanged={load} onTerminated={onTerminated} />
                 ))}
               </div>
             </section>
@@ -396,7 +400,7 @@ export default function DeploymentHistory({ refreshKey }) {
               <h2 className="section-title">Terminated</h2>
               <div className="history-list">
                 {terminated.map((r) => (
-                  <DeploymentRow key={r.deployment_id} record={r} onChanged={load} />
+                  <DeploymentRow key={r.deployment_id} record={r} onChanged={load} onTerminated={onTerminated} />
                 ))}
               </div>
             </section>

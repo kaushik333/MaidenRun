@@ -16,7 +16,15 @@ function formatElapsed(seconds) {
 // launch time. Shared by both the app deploy and feedback-stack deploy
 // cards; costEstimateUrl's response shape (s3_estimated_usd present or not)
 // decides whether the S3 line renders.
-export default function CostMonitor({ costEstimateUrl, instanceId, instanceName, region, deploymentId }) {
+export default function CostMonitor({
+  costEstimateUrl,
+  instanceId,
+  instanceName,
+  region,
+  deploymentId,
+  onTerminated,
+  externallyTerminated,
+}) {
   const [estimate, setEstimate] = useState(null);
   const [now, setNow] = useState(() => Date.now());
   const [terminated, setTerminated] = useState(false);
@@ -24,8 +32,14 @@ export default function CostMonitor({ costEstimateUrl, instanceId, instanceName,
   const [terminating, setTerminating] = useState(false);
   const [error, setError] = useState(null);
 
+  // externallyTerminated covers the case where this same deployment was
+  // terminated from a different view (the Deployments tab) — this card has
+  // no way to know that happened on its own, since it only ever checks its
+  // own local state, so App.jsx tells it.
+  const isTerminated = terminated || externallyTerminated;
+
   useEffect(() => {
-    if (terminated) return undefined;
+    if (isTerminated) return undefined;
     let cancelled = false;
     const fetchEstimate = () =>
       fetch(`${BACKEND_URL}${costEstimateUrl}`)
@@ -40,13 +54,13 @@ export default function CostMonitor({ costEstimateUrl, instanceId, instanceName,
       cancelled = true;
       clearInterval(interval);
     };
-  }, [costEstimateUrl, terminated]);
+  }, [costEstimateUrl, isTerminated]);
 
   useEffect(() => {
-    if (terminated) return undefined;
+    if (isTerminated) return undefined;
     const interval = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(interval);
-  }, [terminated]);
+  }, [isTerminated]);
 
   async function confirmTerminate() {
     setTerminating(true);
@@ -84,6 +98,7 @@ export default function CostMonitor({ costEstimateUrl, instanceId, instanceName,
     setTerminated(true);
     setConfirming(false);
     setTerminating(false);
+    onTerminated?.(deploymentId);
   }
 
   if (!estimate) return null;
@@ -94,10 +109,10 @@ export default function CostMonitor({ costEstimateUrl, instanceId, instanceName,
   const displayName = instanceName || instanceId;
 
   return (
-    <div className="cost-monitor" data-status={terminated ? "terminated" : "running"}>
+    <div className="cost-monitor" data-status={isTerminated ? "terminated" : "running"}>
       <div className="cost-monitor-header">
-        <span className={`cost-status-dot ${terminated ? "" : "cost-status-dot--live"}`} aria-hidden="true" />
-        <span className="cost-monitor-title">{terminated ? "Deployment terminated" : "Deployment running"}</span>
+        <span className={`cost-status-dot ${isTerminated ? "" : "cost-status-dot--live"}`} aria-hidden="true" />
+        <span className="cost-monitor-title">{isTerminated ? "Deployment terminated" : "Deployment running"}</span>
       </div>
 
       <div className="cost-monitor-stats">
@@ -129,13 +144,13 @@ export default function CostMonitor({ costEstimateUrl, instanceId, instanceName,
         below is real: it calls AWS and deletes the instance.
       </p>
 
-      {!terminated && !confirming && (
+      {!isTerminated && !confirming && (
         <button type="button" className="terminate-btn" onClick={() => setConfirming(true)}>
           Terminate instance
         </button>
       )}
 
-      {!terminated && confirming && (
+      {!isTerminated && confirming && (
         <div className="terminate-confirm-row">
           <span className="terminate-confirm-text">
             Terminate <strong>{displayName}</strong>? This deletes the EC2 instance and its EBS volume —

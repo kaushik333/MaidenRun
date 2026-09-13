@@ -25,6 +25,11 @@ export default function App() {
   const [feedbackDeploy, setFeedbackDeploy] = useState(null);
   const [theme, setTheme] = useState(getInitialTheme);
   const [historyVersion, setHistoryVersion] = useState(0);
+  // Deployment ids terminated from *any* view — a CostMonitor card only
+  // knows about a termination it triggered itself, so this is how one
+  // terminated elsewhere (the Deployments tab, or the other deploy form)
+  // reaches it too.
+  const [terminatedIds, setTerminatedIds] = useState(() => new Set());
 
   function handleAgentDeploySuccess(result) {
     setLastDeploy(result);
@@ -33,6 +38,11 @@ export default function App() {
 
   function handleFeedbackDeploySuccess(result) {
     setFeedbackDeploy(result);
+    setHistoryVersion((v) => v + 1);
+  }
+
+  function handleTerminated(deploymentId) {
+    setTerminatedIds((prev) => new Set(prev).add(deploymentId));
     setHistoryVersion((v) => v + 1);
   }
 
@@ -161,16 +171,20 @@ export default function App() {
             onDeploySuccess={handleAgentDeploySuccess}
             onGoToFeedback={() => setActiveTab("feedback")}
             feedbackDeployed={Boolean(feedbackDeploy)}
+            onTerminated={handleTerminated}
+            terminatedIds={terminatedIds}
           />
         </div>
         <div hidden={activeTab !== "feedback"}>
           <DeployFeedbackStack
             onDeploySuccess={handleFeedbackDeploySuccess}
             lastAwsRegion={lastDeploy?.region ?? null}
+            onTerminated={handleTerminated}
+            terminatedIds={terminatedIds}
           />
         </div>
         <div hidden={activeTab !== "history"}>
-          <DeploymentHistory refreshKey={historyVersion} />
+          <DeploymentHistory refreshKey={historyVersion} onTerminated={handleTerminated} />
         </div>
       </div>
     </main>

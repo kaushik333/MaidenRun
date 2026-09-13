@@ -38,7 +38,7 @@ const initialState = {
   instance_name: "",
 };
 
-export default function DeployFeedbackStack({ onDeploySuccess, lastAwsRegion }) {
+export default function DeployFeedbackStack({ onDeploySuccess, lastAwsRegion, onTerminated, terminatedIds }) {
   const [form, setForm] = useState(initialState);
   const [questionnaireFile, setQuestionnaireFile] = useState(null);
   const [fileError, setFileError] = useState(null);
@@ -309,6 +309,8 @@ export default function DeployFeedbackStack({ onDeploySuccess, lastAwsRegion }) 
               instanceName={result.instanceName}
               region={result.region}
               deploymentId={result.deploymentId}
+              onTerminated={onTerminated}
+              externallyTerminated={terminatedIds?.has(result.deploymentId)}
             />
           )}
         </form>

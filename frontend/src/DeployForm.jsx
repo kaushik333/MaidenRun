@@ -56,7 +56,13 @@ const initialState = {
 
 const IDLE_REPO_CHECK = { status: "idle", entry_point: null, error: null };
 
-export default function DeployForm({ onDeploySuccess, onGoToFeedback, feedbackDeployed }) {
+export default function DeployForm({
+  onDeploySuccess,
+  onGoToFeedback,
+  feedbackDeployed,
+  onTerminated,
+  terminatedIds,
+}) {
   const [form, setForm] = useState(initialState);
   const [result, setResult] = useState(null);
   const [submitting, setSubmitting] = useState(false);
@@ -568,6 +574,8 @@ export default function DeployForm({ onDeploySuccess, onGoToFeedback, feedbackDe
             instanceName={result.instanceName}
             region={result.region}
             deploymentId={result.deploymentId}
+            onTerminated={onTerminated}
+            externallyTerminated={terminatedIds?.has(result.deploymentId)}
           />
         )}
       </form>

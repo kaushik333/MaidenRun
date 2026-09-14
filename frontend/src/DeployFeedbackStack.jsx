@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { BACKEND_URL } from "./config";
+import { apiFetch } from "./apiClient";
 import CostMonitor from "./CostMonitor.jsx";
 import DeploySteps from "./DeploySteps.jsx";
 import PasswordField from "./PasswordField.jsx";
@@ -77,7 +78,7 @@ export default function DeployFeedbackStack({ onDeploySuccess, lastAwsRegion, on
   function pollStatus(deploymentId, generation, region, instanceName) {
     if (pollGenerationRef.current !== generation) return;
 
-    fetch(`${BACKEND_URL}/deploy-feedback/${deploymentId}/status`)
+    apiFetch(`${BACKEND_URL}/deploy-feedback/${deploymentId}/status`)
       .then((res) => res.json())
       .then((data) => {
         if (pollGenerationRef.current !== generation) return;
@@ -146,7 +147,7 @@ export default function DeployFeedbackStack({ onDeploySuccess, lastAwsRegion, on
 
     let res;
     try {
-      res = await fetch(`${BACKEND_URL}/deploy-feedback`, {
+      res = await apiFetch(`${BACKEND_URL}/deploy-feedback`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { BACKEND_URL } from "./config";
+import { apiFetch } from "./apiClient";
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -42,7 +43,7 @@ export default function CostMonitor({
     if (isTerminated) return undefined;
     let cancelled = false;
     const fetchEstimate = () =>
-      fetch(`${BACKEND_URL}${costEstimateUrl}`)
+      apiFetch(`${BACKEND_URL}${costEstimateUrl}`)
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
           if (!cancelled && data) setEstimate(data);
@@ -68,7 +69,7 @@ export default function CostMonitor({
 
     let res;
     try {
-      res = await fetch(`${BACKEND_URL}/terminate`, {
+      res = await apiFetch(`${BACKEND_URL}/terminate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ instance_id: instanceId, region, deployment_id: deploymentId }),

@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useState } from "react";
+import ApiSecretField from "./ApiSecretField.jsx";
 import DeployFeedbackStack from "./DeployFeedbackStack.jsx";
 import DeployForm from "./DeployForm.jsx";
 import DeploymentHistory from "./DeploymentHistory.jsx";
@@ -133,6 +134,7 @@ export default function App() {
             <span className="status-dot" />
             backend: {status}
           </span>
+          <ApiSecretField />
         </header>
 
         <div className="segmented tab-bar" role="tablist" aria-label="Sections">

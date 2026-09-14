@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.compatibility_report import router as compatibility_report_router
@@ -12,6 +12,7 @@ from app.api.deployments import router as deployments_router
 from app.api.health import router as health_router
 from app.api.setup_info import router as setup_info_router
 from app.api.validate_repo import router as validate_repo_router
+from app.core.auth import require_signed_request
 from app.core.config import settings
 from app.core.logging import logger
 
@@ -33,10 +34,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+signed = [Depends(require_signed_request)]
+
+# /health is deliberately exempt — used for liveness probes/uptime checks
+# that have no way to hold the control-plane secret.
 app.include_router(health_router)
-app.include_router(deploy_router)
-app.include_router(deploy_feedback_router)
-app.include_router(deployments_router)
-app.include_router(validate_repo_router)
-app.include_router(compatibility_report_router)
-app.include_router(setup_info_router)
+app.include_router(deploy_router, dependencies=signed)
+app.include_router(deploy_feedback_router, dependencies=signed)
+app.include_router(deployments_router, dependencies=signed)
+app.include_router(validate_repo_router, dependencies=signed)
+app.include_router(compatibility_report_router, dependencies=signed)
+app.include_router(setup_info_router, dependencies=signed)

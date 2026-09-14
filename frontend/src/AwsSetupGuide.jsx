@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { BACKEND_URL } from "./config";
+import { apiFetch } from "./apiClient";
 
 function CodeBlock({ json }) {
   const [copied, setCopied] = useState(false);
@@ -58,7 +59,7 @@ export default function AwsSetupGuide() {
 
   useEffect(() => {
     if (!open || info || error) return;
-    fetch(`${BACKEND_URL}/setup-info`)
+    apiFetch(`${BACKEND_URL}/setup-info`)
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();

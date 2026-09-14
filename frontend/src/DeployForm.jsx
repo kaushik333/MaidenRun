@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { BACKEND_URL } from "./config";
+import { apiFetch } from "./apiClient";
 import AwsSetupGuide from "./AwsSetupGuide.jsx";
 import CostMonitor from "./CostMonitor.jsx";
 import DeploySteps from "./DeploySteps.jsx";
@@ -95,7 +96,7 @@ export default function DeployForm({
 
     let res;
     try {
-      res = await fetch(`${BACKEND_URL}/validate-repo`, {
+      res = await apiFetch(`${BACKEND_URL}/validate-repo`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ repo_url: form.repo_url, github_token: form.github_token.trim() || null }),
@@ -165,7 +166,7 @@ export default function DeployForm({
   function pollDeployStatus(deploymentId, generation, appInstanceName, region) {
     if (pollGenerationRef.current !== generation) return;
 
-    fetch(`${BACKEND_URL}/deploy/${deploymentId}/status`)
+    apiFetch(`${BACKEND_URL}/deploy/${deploymentId}/status`)
       .then((res) => res.json())
       .then((data) => {
         if (pollGenerationRef.current !== generation) return;
@@ -241,7 +242,7 @@ export default function DeployForm({
 
     let res;
     try {
-      res = await fetch(`${BACKEND_URL}/deploy`, {
+      res = await apiFetch(`${BACKEND_URL}/deploy`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),

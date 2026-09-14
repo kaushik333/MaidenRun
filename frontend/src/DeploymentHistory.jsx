@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { BACKEND_URL } from "./config";
+import { apiFetch } from "./apiClient";
 
 // Mirrors backend/app/api/deploy.py's AWS_REGIONS — same curated list,
 // duplicated the same way DeployForm.jsx and DeployFeedbackStack.jsx do.
@@ -78,7 +79,7 @@ function DeploymentRow({ record, onChanged, onTerminated }) {
 
     let res;
     try {
-      res = await fetch(`${BACKEND_URL}/terminate`, {
+      res = await apiFetch(`${BACKEND_URL}/terminate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -213,7 +214,7 @@ function BucketCleanup({ defaultRegion }) {
   useEffect(() => {
     let cancelled = false;
     function poll() {
-      fetch(`${BACKEND_URL}/deploy-feedback/active`)
+      apiFetch(`${BACKEND_URL}/deploy-feedback/active`)
         .then((res) => res.json())
         .then((data) => {
           if (!cancelled) setActive(Boolean(data.active));
@@ -235,7 +236,7 @@ function BucketCleanup({ defaultRegion }) {
 
     let res;
     try {
-      res = await fetch(`${BACKEND_URL}/deploy-feedback/cleanup-bucket`, {
+      res = await apiFetch(`${BACKEND_URL}/deploy-feedback/cleanup-bucket`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ region }),
@@ -349,7 +350,7 @@ export default function DeploymentHistory({ refreshKey, onTerminated }) {
 
   function load() {
     setLoading(true);
-    fetch(`${BACKEND_URL}/deployments`)
+    apiFetch(`${BACKEND_URL}/deployments`)
       .then((res) => res.json())
       .then((data) => {
         setRecords(data);

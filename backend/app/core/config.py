@@ -25,6 +25,12 @@ class Settings(BaseSettings):
     aws_default_region: str = "us-east-1"
     aws_credentials_path: str = str(Path.home() / ".agentdock" / "credentials.json")
 
+    # HMAC request signing (see app/core/auth.py) — empty disables auth
+    # entirely, which is the default for local/dev. Set to a random value
+    # (e.g. `openssl rand -hex 32`) before exposing the backend on any
+    # network other than your own machine's loopback.
+    control_plane_secret: str = ""
+
     # reserved app/feedback ports (fixed contract, see IDEA.md)
     app_port: int = 8001
     feedback_form_port: int = 8002

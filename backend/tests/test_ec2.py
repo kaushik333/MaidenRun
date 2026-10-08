@@ -114,6 +114,23 @@ def test_render_user_data_compose_runs_docker_compose_up():
         repo_url=REPO_URL, entry_point="compose", secret_names=[], deployment_id=DEPLOYMENT_ID, region="us-east-1"
     )
     assert "docker compose up -d" in user_data
+    assert "compose.env.yml" not in user_data  # no secrets, no override needed
+
+
+def test_render_user_data_compose_injects_secret_names_via_override():
+    user_data = ec2.render_user_data(
+        repo_url=REPO_URL,
+        entry_point="compose",
+        secret_names=list(SECRETS.keys()),
+        deployment_id=DEPLOYMENT_ID,
+        region="us-east-1",
+    )
+
+    assert 'echo "      - OPENAI_API_KEY"' in user_data  # bare name, value comes from the shell
+    assert SECRETS["OPENAI_API_KEY"] not in user_data
+    assert user_data.rstrip().endswith(
+        'docker compose -f "$COMPOSE_MAIN" -f /opt/agentdock/compose.env.yml up -d'
+    )
 
 
 def test_render_user_data_dockerfile_builds_and_runs_with_bare_env_flags():

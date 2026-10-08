@@ -31,6 +31,9 @@ service consolidation, port 8001). Do not:
 - Add, remove, or reconfigure external services (Pinecone, RDS, Langfuse,
   etc.) — those are consumed via environment variables the platform injects
   at deploy time, not declared in the compose file.
+- Declare those environment variables in `docker-compose.yml`. The platform
+  injects every variable entered on the deploy form into every service, and
+  those values override same-named ones in the compose file.
 - Rename or restructure anything not required to satisfy the contract
   above.
 

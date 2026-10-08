@@ -327,6 +327,25 @@ def test_deploy_base_url_value_without_name_rejected() -> None:
     assert response.status_code == 422
 
 
+def test_deploy_rejects_env_var_names_that_are_not_valid_shell_names() -> None:
+    for bad in ("MY-KEY", "1KEY", 'KEY"; rm -rf /', "MY KEY"):
+        payload = {**EXTERNAL_LLM_PAYLOAD, "env_vars": [{"key": bad, "value": "x"}]}
+        response = client.post("/deploy", json=payload)
+        assert response.status_code == 422, bad
+
+
+def test_deploy_rejects_duplicate_env_var_names() -> None:
+    payload = {**EXTERNAL_LLM_PAYLOAD, "env_vars": [{"key": "OPENAI_API_KEY", "value": "x"}]}
+    response = client.post("/deploy", json=payload)
+    assert response.status_code == 422
+
+
+def test_deploy_rejects_reserved_repo_token_name() -> None:
+    payload = {**EXTERNAL_LLM_PAYLOAD, "env_vars": [{"key": "__repo_token", "value": "x"}]}
+    response = client.post("/deploy", json=payload)
+    assert response.status_code == 422
+
+
 def test_deploy_rejects_gpu_instance_type() -> None:
     # GPU instances no longer have any path to be provisioned — hosting an
     # LLM is entirely the user's own responsibility now, wherever they do it.

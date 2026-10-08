@@ -1,3 +1,4 @@
+import re
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -8,7 +9,12 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, Field, model_validator
 
 from app.aws.credentials import NoCredentialsError, get_session
-from app.aws.ec2 import launch_app_instance, terminate_instance, wait_for_port_health
+from app.aws.ec2 import (
+    REPO_TOKEN_PARAM_NAME,
+    launch_app_instance,
+    terminate_instance,
+    wait_for_port_health,
+)
 from app.aws.pricing import EC2_HOURLY_RATES, estimate_ec2_cost
 from app.core import history
 from app.core.config import settings
@@ -17,6 +23,7 @@ from app.core.logging import logger
 from app.validation.validator import validate_repo
 
 CPU_INSTANCE_TYPES = ("t3.small", "t3.medium", "m5.xlarge")
+ENV_VAR_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 # Curated, not exhaustive — same "no confusing options" reasoning as the
 # instance-type/EBS-size dropdowns. IAM/the instance role are global and
 # work in any of these; only the default-VPC requirement is per-region.
@@ -79,6 +86,18 @@ class DeployRequest(BaseModel):
             raise ValueError("api_key_name and api_key_value must be provided together")
         if bool(self.base_url_name) != bool(self.base_url_value):
             raise ValueError("base_url_name and base_url_value must be provided together")
+        # Names are spliced into the instance's boot script as `export NAME=...`
+        # and into its compose override — anything but a plain env var name
+        # would break (or inject into) that script.
+        names = [ev.key for ev in self.env_vars] + [n for n in (self.api_key_name, self.base_url_name) if n]
+        invalid = [n for n in names if not ENV_VAR_NAME.fullmatch(n)]
+        if invalid:
+            raise ValueError(
+                f"Invalid environment variable name(s): {', '.join(invalid)} — use letters, digits and "
+                "underscores only, not starting with a digit"
+            )
+        if len(set(names)) != len(names) or REPO_TOKEN_PARAM_NAME in names:
+            raise ValueError("Environment variable names must be unique")
         return self
 
 

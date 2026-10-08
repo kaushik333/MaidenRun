@@ -150,7 +150,27 @@ def render_user_data(
         for name in secret_names
     )
 
-    if entry_point == "compose":
+    if entry_point == "compose" and secret_names:
+        # Compose only uses this script's exported vars for ${VAR}
+        # interpolation — it never passes them into containers on its own.
+        # This override (on the instance, outside the user's clone) lists each
+        # secret by bare name, no value, on every service, so Compose copies
+        # the value in from this shell's environment at `up` time.
+        env_lines = "".join(f'    echo "      - {name}"\n' for name in secret_names)
+        run_command = (
+            'COMPOSE_MAIN="$(ls docker-compose*.y*ml)"\n'
+            "mkdir -p /opt/agentdock\n"
+            "{\n"
+            '  echo "services:"\n'
+            '  for svc in $(docker compose -f "$COMPOSE_MAIN" config --services); do\n'
+            '    echo "  \\"$svc\\":"\n'
+            '    echo "    environment:"\n'
+            f"{env_lines}"
+            "  done\n"
+            "} > /opt/agentdock/compose.env.yml\n"
+            'docker compose -f "$COMPOSE_MAIN" -f /opt/agentdock/compose.env.yml up -d'
+        )
+    elif entry_point == "compose":
         run_command = "docker compose up -d"
     else:
         env_flags = " ".join(f"-e {name}" for name in secret_names)

@@ -231,7 +231,7 @@ export default function DeployForm({
       ...formForBackend,
       instance_name: app_instance_name.trim() || null,
       github_token: form.github_token.trim() || null,
-      env_vars: form.env_vars.filter((v) => v.key.trim() !== ""),
+      env_vars: form.env_vars.filter((v) => v.key.trim() !== "").map((v) => ({ ...v, key: v.key.trim() })),
       api_key_name: form.api_key_name.trim() || null,
       api_key_value: form.api_key_value || null,
       base_url_name: form.base_url_name.trim() || null,
@@ -393,8 +393,8 @@ export default function DeployForm({
           <h2 className="section-title">LLM connection</h2>
           <p className="section-hint">
             However your agent reaches its model — a provider's API, or one you host yourself — tell us the
-            environment variable names your code reads and we'll set them. Leave any of these blank if your
-            agent doesn't need them.
+            environment variable names your code reads and we'll set them in every container — no need to
+            declare them in your docker-compose.yml. Leave any of these blank if your agent doesn't need them.
           </p>
           <div className="field-row">
             <div className="field">

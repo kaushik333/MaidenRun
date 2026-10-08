@@ -20,4 +20,7 @@ COPY --from=frontend-build /build/dist ./static
 
 EXPOSE 8002
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8002"]
+# --workers 2 matches the 2 vCPUs on the fixed t3.small this always deploys
+# to (INSTANCE_TYPE in backend/app/aws/feedback_stack.py, control-plane
+# side) — keep the two in sync if that instance type ever changes.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8002", "--workers", "2"]

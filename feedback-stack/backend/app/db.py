@@ -1,5 +1,8 @@
+from contextlib import AbstractContextManager
+
 import psycopg
 from psycopg.types.json import Jsonb
+from psycopg_pool import ConnectionPool
 
 from app.core.config import settings
 
@@ -12,14 +15,32 @@ CREATE TABLE IF NOT EXISTS feedback (
 )
 """
 
+# Pooled instead of a bare psycopg.connect() per request — each of uvicorn's
+# --workers gets its own pool, so max_size here is a per-worker cap. Small on
+# purpose: this workload is a handful of form submissions, not high-throughput
+# traffic (see backend/Dockerfile for the worker count this is sized against).
+pool = ConnectionPool(settings.database_url, min_size=1, max_size=5, open=True)
 
-def get_connection() -> psycopg.Connection:
-    return psycopg.connect(settings.database_url)
+
+def get_connection() -> AbstractContextManager[psycopg.Connection]:
+    return pool.connection()
 
 
 def ensure_schema(conn: psycopg.Connection) -> None:
-    conn.execute(_SCHEMA)
-    conn.commit()
+    """CREATE TABLE IF NOT EXISTS is not race-free under real concurrency:
+    with multiple uvicorn workers each running this at startup, two can both
+    pass the existence check before either commits. The loser's error isn't
+    consistently DuplicateTable — CREATE TABLE also creates a backing
+    sequence and row type, so Postgres can instead report a UniqueViolation
+    on whichever catalog entry collided first (observed in practice: the
+    implicit SERIAL sequence's pg_class row). Either way it's harmless — the
+    desired end state (table exists) is reached regardless of which worker
+    "won"."""
+    try:
+        conn.execute(_SCHEMA)
+        conn.commit()
+    except (psycopg.errors.DuplicateTable, psycopg.errors.UniqueViolation):
+        conn.rollback()
 
 
 def insert_feedback(conn: psycopg.Connection, deployment_id: str, answers: list[dict]) -> None:

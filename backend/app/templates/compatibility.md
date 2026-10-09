@@ -9,11 +9,11 @@ gaps found here, use `adapt.md` instead.
 ## The contract
 
 1. The repo has a **single entry point at its root**: either one
-   `docker-compose.yml`, or (if there's no compose file) a single
-   `Dockerfile`.
+   compose file (`compose.yaml` or `docker-compose.yml`), or (if there's
+   none) a single `Dockerfile`.
 2. Multi-file compose setups (`-f` chaining, `docker-compose.override.yml`,
    etc.) are **not supported** — everything must be consolidated into that
-   one root `docker-compose.yml`.
+   one root compose file.
 3. Whichever service is meant to be reviewed publishes on **host port
    8001**.
 4. No service maps a host port to **8002** or **8003** — those are reserved
@@ -30,13 +30,13 @@ Walk the repo root and report exactly one line per check below, each
 prefixed with ✔ (pass) or ✘ (fail):
 
 ```
-✔ Single docker-compose.yml found at repo root
+✔ Single compose file found at repo root (compose.yaml)
 ✘ No service maps to host port 8001 (agent UI not exposed)
 ✘ A service maps to host port 8002 — conflicts with reserved feedback port
 ✔ No multi-file compose chaining detected
 ```
 
-If the repo has no `docker-compose.yml` at all, check `Dockerfile` instead
+If the repo has no compose file at all, check `Dockerfile` instead
 and adjust the first line's wording accordingly (e.g. "Single Dockerfile
 found at repo root").
 

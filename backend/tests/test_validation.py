@@ -42,7 +42,29 @@ def test_missing_8001_rejected() -> None:
 def test_multi_file_compose_rejected() -> None:
     result = validate_repo_dir(FIXTURES_DIR / "multi-file-compose")
     assert result.valid is False
-    assert "Multiple docker-compose files" in result.error
+    assert "Multiple compose files" in result.error
+
+
+def test_compose_yaml_repo_passes() -> None:
+    result = validate_repo_dir(FIXTURES_DIR / "compose-yaml-valid")
+    assert result.valid is True
+    assert result.entry_point == "compose"
+
+
+def test_compose_yaml_alongside_docker_compose_yml_is_rejected_as_multi_file(tmp_path: Path) -> None:
+    compose = (FIXTURES_DIR / "valid" / "docker-compose.yml").read_text()
+    (tmp_path / "compose.yaml").write_text(compose)
+    (tmp_path / "docker-compose.yml").write_text(compose)
+    result = validate_repo_dir(tmp_path)
+    assert result.valid is False
+    assert "compose.yaml, docker-compose.yml" in result.error
+
+
+def test_compose_errors_name_the_actual_file(tmp_path: Path) -> None:
+    (tmp_path / "compose.yaml").write_text("services:\n  app:\n    ports: ['3000:3000']\n")
+    result = validate_repo_dir(tmp_path)
+    assert result.valid is False
+    assert "update compose.yaml" in result.error
 
 
 def test_no_entry_point_rejected(tmp_path: Path) -> None:
@@ -113,3 +135,4 @@ def test_validate_repo_endpoint_passes_github_token_through() -> None:
             json={"repo_url": "https://github.com/x/y", "github_token": "ghp_secrettoken"},
         )
     mock_validate.assert_called_once_with("https://github.com/x/y", "ghp_secrettoken")
+

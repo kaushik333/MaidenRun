@@ -8,6 +8,10 @@ from app.validation.models import ValidateRepoResponse
 
 APP_PORT = 8001
 RESERVED_FEEDBACK_PORTS = {8002: "feedback capture", 8003: "the feedback dashboard"}
+# Every filename `docker compose` picks up on its own (compose.yaml is Docker's
+# preferred one today), plus their override variants — which is how a
+# multi-file setup gets detected and rejected.
+COMPOSE_FILE_PATTERNS = ("compose*.y*ml", "docker-compose*.y*ml")
 CLONE_TIMEOUT_SECONDS = 300
 
 
@@ -88,7 +92,7 @@ def _validate_compose(compose_path: Path) -> ValidateRepoResponse:
                 entry_point="compose",
                 error=(
                     f"Port {port} is reserved by the platform for {purpose}. Update "
-                    "docker-compose.yml to use a different host port for that service "
+                    f"{compose_path.name} to use a different host port for that service "
                     "and redeploy."
                 ),
             )
@@ -99,15 +103,19 @@ def _validate_compose(compose_path: Path) -> ValidateRepoResponse:
             entry_point="compose",
             error=(
                 f"No service maps a host port to {APP_PORT}. The platform expects your "
-                "agent UI on host port 8001 — update docker-compose.yml."
+                f"agent UI on host port 8001 — update {compose_path.name}."
             ),
         )
 
     return ValidateRepoResponse(valid=True, entry_point="compose")
 
 
+def find_compose_files(repo_dir: Path) -> list[Path]:
+    return sorted(path for pattern in COMPOSE_FILE_PATTERNS for path in repo_dir.glob(pattern))
+
+
 def validate_repo_dir(repo_dir: Path) -> ValidateRepoResponse:
-    compose_files = sorted(repo_dir.glob("docker-compose*.y*ml"))
+    compose_files = find_compose_files(repo_dir)
     dockerfile = repo_dir / "Dockerfile"
 
     if len(compose_files) > 1:
@@ -115,9 +123,9 @@ def validate_repo_dir(repo_dir: Path) -> ValidateRepoResponse:
         return ValidateRepoResponse(
             valid=False,
             error=(
-                f"Multiple docker-compose files found ({names}). Multi-file compose "
+                f"Multiple compose files found ({names}). Multi-file compose "
                 "setups (override/-f chaining) are not supported — consolidate "
-                "everything into a single root docker-compose.yml."
+                "everything into a single root compose.yaml (or docker-compose.yml)."
             ),
         )
 
@@ -129,7 +137,7 @@ def validate_repo_dir(repo_dir: Path) -> ValidateRepoResponse:
 
     return ValidateRepoResponse(
         valid=False,
-        error="No entry point found. Add a docker-compose.yml or Dockerfile at the repo root.",
+        error="No entry point found. Add a compose.yaml (or docker-compose.yml) or a Dockerfile at the repo root.",
     )
 
 

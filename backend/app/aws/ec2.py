@@ -226,7 +226,8 @@ def render_user_data(
         # the value in from this shell's environment at `up` time.
         env_lines = "".join(f'    echo "      - {name}"\n' for name in secret_names)
         run_command = (
-            'COMPOSE_MAIN="$(ls docker-compose*.y*ml)"\n'
+            # Same filenames the validator accepts (exactly one exists by now).
+            'COMPOSE_MAIN="$(ls compose*.y*ml docker-compose*.y*ml 2>/dev/null || true)"\n'
             "mkdir -p /opt/maidenrun\n"
             "{\n"
             '  echo "services:"\n'

@@ -4,7 +4,13 @@ from pathlib import Path
 import yaml
 
 from app.validation.models import CheckResult, CompatibilityReport
-from app.validation.validator import APP_PORT, RESERVED_FEEDBACK_PORTS, clone_repo, host_ports_of_service
+from app.validation.validator import (
+    APP_PORT,
+    RESERVED_FEEDBACK_PORTS,
+    clone_repo,
+    find_compose_files,
+    host_ports_of_service,
+)
 
 RESERVED_PORT_LABELS = {8002: "feedback", 8003: "feedback dashboard"}
 
@@ -14,7 +20,7 @@ def render_checklist(checks: list[CheckResult]) -> str:
 
 
 def compatibility_checklist(repo_dir: Path) -> list[CheckResult]:
-    compose_files = sorted(repo_dir.glob("docker-compose*.y*ml"))
+    compose_files = find_compose_files(repo_dir)
     dockerfile = repo_dir / "Dockerfile"
     checks: list[CheckResult] = []
 
@@ -24,17 +30,17 @@ def compatibility_checklist(repo_dir: Path) -> list[CheckResult]:
         checks.append(
             CheckResult(
                 ok=False,
-                text=f"Single docker-compose.yml found at repo root (found {len(compose_files)}: {names})",
+                text=f"Single compose file found at repo root (found {len(compose_files)}: {names})",
             )
         )
     elif compose_files:
         entry_point = "compose"
-        checks.append(CheckResult(ok=True, text="Single docker-compose.yml found at repo root"))
+        checks.append(CheckResult(ok=True, text=f"Single compose file found at repo root ({compose_files[0].name})"))
     elif dockerfile.is_file():
         entry_point = "dockerfile"
         checks.append(CheckResult(ok=True, text="Single Dockerfile found at repo root"))
     else:
-        checks.append(CheckResult(ok=False, text="No docker-compose.yml or Dockerfile found at repo root"))
+        checks.append(CheckResult(ok=False, text="No compose file (compose.yaml / docker-compose.yml) or Dockerfile found at repo root"))
 
     host_ports: dict[int, str] = {}
     parse_error: str | None = None

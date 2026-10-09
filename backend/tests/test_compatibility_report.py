@@ -17,7 +17,7 @@ def _texts(checks: list) -> list[tuple[bool, str]]:
 def test_checklist_valid_compose() -> None:
     checks = compatibility_checklist(FIXTURES_DIR / "valid")
     assert _texts(checks) == [
-        (True, "Single docker-compose.yml found at repo root"),
+        (True, "Single compose file found at repo root (docker-compose.yml)"),
         (True, "A service maps to host port 8001 (agent UI exposed)"),
         (True, "No service maps to reserved ports 8002/8003"),
         (True, "No multi-file compose chaining detected"),
@@ -27,7 +27,7 @@ def test_checklist_valid_compose() -> None:
 def test_checklist_port_8002_clash() -> None:
     checks = compatibility_checklist(FIXTURES_DIR / "port-8002-clash")
     assert _texts(checks) == [
-        (True, "Single docker-compose.yml found at repo root"),
+        (True, "Single compose file found at repo root (docker-compose.yml)"),
         (True, "A service maps to host port 8001 (agent UI exposed)"),
         (False, "A service maps to host port 8002 — conflicts with reserved feedback port"),
         (True, "No multi-file compose chaining detected"),
@@ -37,7 +37,7 @@ def test_checklist_port_8002_clash() -> None:
 def test_checklist_missing_8001() -> None:
     checks = compatibility_checklist(FIXTURES_DIR / "missing-8001")
     assert _texts(checks) == [
-        (True, "Single docker-compose.yml found at repo root"),
+        (True, "Single compose file found at repo root (docker-compose.yml)"),
         (False, "No service maps to host port 8001 (agent UI not exposed)"),
         (True, "No service maps to reserved ports 8002/8003"),
         (True, "No multi-file compose chaining detected"),
@@ -49,7 +49,7 @@ def test_checklist_multi_file_compose() -> None:
     assert _texts(checks) == [
         (
             False,
-            "Single docker-compose.yml found at repo root "
+            "Single compose file found at repo root "
             "(found 2: docker-compose.override.yml, docker-compose.yml)",
         ),
         (False, "Could not confirm host port 8001 — resolve the entry point issue above first"),
@@ -72,7 +72,7 @@ def test_render_checklist_uses_check_and_cross_marks() -> None:
     checks = compatibility_checklist(FIXTURES_DIR / "port-8002-clash")
     rendered = render_checklist(checks)
     assert rendered == (
-        "✔ Single docker-compose.yml found at repo root\n"
+        "✔ Single compose file found at repo root (docker-compose.yml)\n"
         "✔ A service maps to host port 8001 (agent UI exposed)\n"
         "✘ A service maps to host port 8002 — conflicts with reserved feedback port\n"
         "✔ No multi-file compose chaining detected"
@@ -92,3 +92,9 @@ def test_compatibility_report_endpoint_reports_clone_failure() -> None:
 def test_compatibility_report_endpoint_rejects_missing_repo_param() -> None:
     response = client.get("/compatibility-report")
     assert response.status_code == 422
+
+
+def test_checklist_accepts_compose_yaml() -> None:
+    checks = compatibility_checklist(FIXTURES_DIR / "compose-yaml-valid")
+    assert _texts(checks)[0] == (True, "Single compose file found at repo root (compose.yaml)")
+    assert all(ok for ok, _ in _texts(checks))

@@ -325,7 +325,7 @@ export default function DeployForm({
             {repoCheck.status === "valid" && (
               <p className="field-status field-status--ok">
                 ✓ Compatible —{" "}
-                {repoCheck.entry_point === "compose" ? "docker-compose.yml" : "Dockerfile"} entry point found
+                {repoCheck.entry_point === "compose" ? "Compose file" : "Dockerfile"} entry point found
               </p>
             )}
             {repoCheck.status === "invalid" && (
@@ -397,7 +397,7 @@ export default function DeployForm({
           <p className="section-hint">
             However your agent reaches its model — a provider's API, or one you host yourself — tell us the
             environment variable names your code reads and we'll set them in every container — no need to
-            declare them in your docker-compose.yml. Leave any of these blank if your agent doesn't need them.
+            declare them in your compose file. Leave any of these blank if your agent doesn't need them.
           </p>
           <div className="field-row">
             <div className="field">

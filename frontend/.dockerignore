@@ -1,0 +1,4 @@
+# Host node_modules must never overwrite the container's own `npm install`
+# (platform-specific binaries, e.g. esbuild on macOS vs Linux).
+node_modules
+dist

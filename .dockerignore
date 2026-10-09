@@ -1,0 +1,10 @@
+# Build context for backend/Dockerfile — keeps host-built deps and local
+# state (incl. data/credentials.json) out of the Docker build entirely.
+**/node_modules
+**/dist
+**/.venv
+**/__pycache__
+.git
+.env
+logs
+data

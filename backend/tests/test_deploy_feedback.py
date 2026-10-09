@@ -90,7 +90,7 @@ def test_deploy_feedback_deletes_s3_bundle_after_successful_health_check(_mock_h
         aws_access_key_id="test", aws_secret_access_key="test", region_name=settings.aws_default_region
     )
     account_id = session.client("sts").get_caller_identity()["Account"]
-    bucket = f"agentdock-{account_id}"
+    bucket = f"maidenrun-{account_id}"
     objects = session.client("s3").list_objects_v2(Bucket=bucket).get("Contents", [])
     assert objects == []
 
@@ -153,7 +153,7 @@ def test_deploy_feedback_rolls_back_instance_and_bundle_on_health_check_failure(
     assert states == ["shutting-down"] or states == ["terminated"]
 
     account_id = session.client("sts").get_caller_identity()["Account"]
-    bucket = f"agentdock-{account_id}"
+    bucket = f"maidenrun-{account_id}"
     objects = session.client("s3").list_objects_v2(Bucket=bucket).get("Contents", [])
     assert objects == []
 

@@ -17,7 +17,7 @@ def test_ensure_bundle_bucket_creates_and_reuses_bucket_in_us_east_1() -> None:
     bucket = ensure_bundle_bucket(session)
 
     account_id = session.client("sts").get_caller_identity()["Account"]
-    assert bucket == f"agentdock-{account_id}"
+    assert bucket == f"maidenrun-{account_id}"
 
     # Calling again must not raise (e.g. re-creating an existing bucket).
     assert ensure_bundle_bucket(session) == bucket

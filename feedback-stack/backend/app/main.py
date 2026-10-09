@@ -22,7 +22,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="AgentDock — Feedback Stack", lifespan=lifespan)
+app = FastAPI(title="Maidenrun — Feedback Stack", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

@@ -18,4 +18,4 @@ def test_setup_info_matches_the_actual_infra_files_exactly() -> None:
 
     assert body["iam_policy"] == json.loads((INFRA_DIR / "iam-policy.json").read_text())
     assert body["instance_role_policy"] == json.loads((INFRA_DIR / "instance-role-policy.json").read_text())
-    assert body["instance_role_name"] == INSTANCE_ROLE_NAME == "agentdock-instance-role"
+    assert body["instance_role_name"] == INSTANCE_ROLE_NAME == "maidenrun-instance-role"

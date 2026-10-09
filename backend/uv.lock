@@ -3,7 +3,7 @@ revision = 3
 requires-python = ">=3.12"
 
 [[package]]
-name = "agentdock-backend"
+name = "maidenrun-backend"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

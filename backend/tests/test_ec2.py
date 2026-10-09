@@ -60,7 +60,7 @@ def test_write_secret_parameters_stores_securestring(aws_session):
     ec2.write_secret_parameters(aws_session, DEPLOYMENT_ID, SECRETS)
 
     param = aws_session.client("ssm").get_parameter(
-        Name=f"/agentdock/{DEPLOYMENT_ID}/OPENAI_API_KEY", WithDecryption=True
+        Name=f"/maidenrun/{DEPLOYMENT_ID}/OPENAI_API_KEY", WithDecryption=True
     )
     assert param["Parameter"]["Value"] == SECRETS["OPENAI_API_KEY"]
     assert param["Parameter"]["Type"] == "SecureString"
@@ -129,7 +129,7 @@ def test_render_user_data_compose_injects_secret_names_via_override():
     assert 'echo "      - OPENAI_API_KEY"' in user_data  # bare name, value comes from the shell
     assert SECRETS["OPENAI_API_KEY"] not in user_data
     assert user_data.rstrip().endswith(
-        'docker compose -f "$COMPOSE_MAIN" -f /opt/agentdock/compose.env.yml up -d'
+        'docker compose -f "$COMPOSE_MAIN" -f /opt/maidenrun/compose.env.yml up -d'
     )
 
 
@@ -208,7 +208,7 @@ def test_launch_app_instance_falls_back_to_a_default_name(aws_session):
     )
 
     # Never nameless in the console, even if the user left it blank.
-    assert _name_tag(aws_session.client("ec2"), result["instance_id"]) == f"agentdock-{DEPLOYMENT_ID}"
+    assert _name_tag(aws_session.client("ec2"), result["instance_id"]) == f"maidenrun-{DEPLOYMENT_ID}"
 
 
 @mock_aws
@@ -297,7 +297,7 @@ def test_launch_app_instance_stores_repo_token_separately_from_secrets(aws_sessi
 
     ssm = aws_session.client("ssm")
     token_param = ssm.get_parameter(
-        Name=f"/agentdock/{DEPLOYMENT_ID}/{ec2.REPO_TOKEN_PARAM_NAME}", WithDecryption=True
+        Name=f"/maidenrun/{DEPLOYMENT_ID}/{ec2.REPO_TOKEN_PARAM_NAME}", WithDecryption=True
     )
     assert token_param["Parameter"]["Value"] == "ghp_secrettoken"
 
@@ -325,7 +325,7 @@ def test_launch_app_instance_writes_secret_before_launch(aws_session):
     )
 
     param = aws_session.client("ssm").get_parameter(
-        Name=f"/agentdock/{DEPLOYMENT_ID}/OPENAI_API_KEY", WithDecryption=True
+        Name=f"/maidenrun/{DEPLOYMENT_ID}/OPENAI_API_KEY", WithDecryption=True
     )
     assert param["Parameter"]["Value"] == SECRETS["OPENAI_API_KEY"]
 

@@ -29,7 +29,7 @@ def test_launch_feedback_stack_writes_dashboard_token_to_ssm():
 
     assert result["dashboard_token"]
     param = session.client("ssm").get_parameter(
-        Name=f"/agentdock/dep456/DASHBOARD_TOKEN", WithDecryption=True
+        Name=f"/maidenrun/dep456/DASHBOARD_TOKEN", WithDecryption=True
     )
     assert param["Parameter"]["Value"] == result["dashboard_token"]
     assert param["Parameter"]["Type"] == "SecureString"

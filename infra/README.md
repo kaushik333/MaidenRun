@@ -44,13 +44,13 @@ the AWS account you want to deploy into.
    why that matters).
    - IAM console → Roles → Create role → Trusted entity type: **AWS
      service** → Use case: **EC2**.
-   - Name it exactly `agentdock-instance-role` (the platform
+   - Name it exactly `maidenrun-instance-role` (the platform
      references this name directly — see `backend/app/aws/ec2.py`).
    - Attach [`instance-role-policy.json`](instance-role-policy.json) as
      an inline policy — it lets the role read (and only read) secrets
      under this platform's own parameter namespace.
    - Note this role is shared across every deployment (scoped to the
-     whole `/agentdock/*` prefix, not one deployment's exact
+     whole `/maidenrun/*` prefix, not one deployment's exact
      parameter) rather than created fresh per deployment — a deliberate
      simplification so the platform's own IAM user never needs
      `iam:CreateRole`, which would be a much bigger permission to hand
@@ -61,7 +61,7 @@ the AWS account you want to deploy into.
    the first time you deploy.
 
 5. **That's it for reauthentication.** The control plane caches the key
-   locally on your own machine (`~/.agentdock/credentials.json`, or
+   locally on your own machine (`~/.maidenrun/credentials.json`, or
    `data/credentials.json` under docker compose — readable only by you)
    the first time it's provided, and reuses it
    directly for every AWS call after that — deploy, terminate, whatever

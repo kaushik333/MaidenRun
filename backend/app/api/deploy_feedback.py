@@ -237,7 +237,7 @@ def _run_feedback_deployment(
             # (a separate AWS identity from the IAM user's own policy, which
             # is what usually gets re-synced first).
             message += (
-                " If this keeps happening, check that agentdock-instance-role's "
+                " If this keeps happening, check that maidenrun-instance-role's "
                 "policy in AWS matches the current infra/instance-role-policy.json — a missing "
                 "s3:GetObject permission there produces exactly this timeout, since the instance "
                 "can never download its own bundle."

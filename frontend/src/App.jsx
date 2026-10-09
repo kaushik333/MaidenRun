@@ -6,7 +6,7 @@ import DeploymentHistory from "./DeploymentHistory.jsx";
 import { BACKEND_URL } from "./config";
 import "./index.css";
 
-const THEME_STORAGE_KEY = "agentdock-theme";
+const THEME_STORAGE_KEY = "maidenrun-theme";
 
 function getInitialTheme() {
   try {
@@ -125,7 +125,7 @@ export default function App() {
               <circle cx="66" cy="50" r="17" fill="var(--art-coral)" />
             </svg>
           </div>
-          <h1>AgentDock</h1>
+          <h1>Maidenrun</h1>
           <p className="subtitle">
             Point us at your agent's repo and we'll deploy it to your own AWS account,
             with a shareable link and a feedback dashboard included.

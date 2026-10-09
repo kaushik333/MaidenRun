@@ -1,5 +1,5 @@
 [project]
-name = "agentdock-feedback-stack"
+name = "maidenrun-feedback-stack"
 version = "0.1.0"
 description = "Feedback-form backend, deployed onto the user's own feedback-stack EC2 instance"
 requires-python = ">=3.12"

@@ -14,7 +14,7 @@ from app.aws.ec2 import (
 from app.core.config import settings
 from app.core.logging import logger
 
-SECURITY_GROUP_NAME = "agentdock-feedback"
+SECURITY_GROUP_NAME = "maidenrun-feedback"
 
 # Fixed, not user-configurable: a form + dashboard + Postgres don't need to
 # scale with whatever the agent itself needs (see infra discussion — this
@@ -35,7 +35,7 @@ def ensure_feedback_security_group(session: boto3.Session) -> str:
 
     group_id = ec2.create_security_group(
         GroupName=SECURITY_GROUP_NAME,
-        Description="AgentDock: feedback stack, ports 8002/8003 only",
+        Description="Maidenrun: feedback stack, ports 8002/8003 only",
         VpcId=get_default_vpc_id(ec2),
     )["GroupId"]
     ec2.authorize_security_group_ingress(
@@ -154,7 +154,7 @@ def launch_feedback_stack(
                 "ResourceType": "instance",
                 "Tags": [
                     {"Key": "deployment_id", "Value": deployment_id},
-                    {"Key": "Name", "Value": instance_name or f"agentdock-{deployment_id}-feedback"},
+                    {"Key": "Name", "Value": instance_name or f"maidenrun-{deployment_id}-feedback"},
                 ],
             }
         ],

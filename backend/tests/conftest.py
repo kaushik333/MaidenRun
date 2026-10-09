@@ -8,7 +8,7 @@ from app.core.config import settings
 @pytest.fixture(autouse=True)
 def isolated_aws_credentials_path(tmp_path, monkeypatch):
     """Every test gets its own credentials cache file, never the real one at
-    ~/.agentdock/credentials.json."""
+    ~/.maidenrun/credentials.json."""
     monkeypatch.setattr(settings, "aws_credentials_path", str(tmp_path / "credentials.json"))
     # Same for deployment history — otherwise every mocked deploy leaves a
     # fake "running" record in the real data/deployments.

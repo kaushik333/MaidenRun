@@ -41,13 +41,13 @@
       "Sid": "SecretParameterWrite",
       "Effect": "Allow",
       "Action": ["ssm:PutParameter", "ssm:AddTagsToResource", "ssm:DeleteParameter"],
-      "Resource": "arn:aws:ssm:*:*:parameter/agentdock/*"
+      "Resource": "arn:aws:ssm:*:*:parameter/maidenrun/*"
     },
     {
       "Sid": "PassInstanceRole",
       "Effect": "Allow",
       "Action": "iam:PassRole",
-      "Resource": "arn:aws:iam::*:role/agentdock-instance-role"
+      "Resource": "arn:aws:iam::*:role/maidenrun-instance-role"
     },
     {
       "Sid": "WhoAmI",
@@ -59,13 +59,13 @@
       "Sid": "FeedbackBundleBucket",
       "Effect": "Allow",
       "Action": ["s3:CreateBucket", "s3:ListBucket", "s3:PutLifecycleConfiguration"],
-      "Resource": "arn:aws:s3:::agentdock-*"
+      "Resource": "arn:aws:s3:::maidenrun-*"
     },
     {
       "Sid": "FeedbackBundleObjects",
       "Effect": "Allow",
       "Action": ["s3:PutObject", "s3:DeleteObject"],
-      "Resource": "arn:aws:s3:::agentdock-*/feedback-stack-bundles/*"
+      "Resource": "arn:aws:s3:::maidenrun-*/feedback-stack-bundles/*"
     }
   ]
 }

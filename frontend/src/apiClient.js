@@ -5,7 +5,7 @@
 // stays meaningful even without TLS in front of the backend. A no-op drop-in
 // replacement for fetch() when no secret is stored (the local/dev default).
 
-const SECRET_STORAGE_KEY = "agentdock-control-plane-secret";
+const SECRET_STORAGE_KEY = "maidenrun-control-plane-secret";
 
 export function getStoredSecret() {
   try {

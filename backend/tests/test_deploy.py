@@ -127,7 +127,7 @@ def test_deploy_stores_github_token_separately_and_never_in_history(_mock_valida
 
     deployment_id = _response.json()["deployment_id"]
     token_param = session.client("ssm").get_parameter(
-        Name=f"/agentdock/{deployment_id}/{REPO_TOKEN_PARAM_NAME}", WithDecryption=True
+        Name=f"/maidenrun/{deployment_id}/{REPO_TOKEN_PARAM_NAME}", WithDecryption=True
     )
     assert token_param["Parameter"]["Value"] == "ghp_secrettoken"
 
@@ -266,7 +266,7 @@ def test_deploy_reports_it_when_aws_rejects_credentials(_mock_validate, _mock_la
         {
             "Error": {
                 "Code": "InvalidParameterValue",
-                "Message": "Value (agentdock-instance-role) for parameter "
+                "Message": "Value (maidenrun-instance-role) for parameter "
                 "iamInstanceProfile.name is invalid. Invalid IAM Instance Profile name",
             }
         },

@@ -7,10 +7,10 @@ import boto3
 from app.core.config import settings
 from app.core.logging import logger
 
-SECURITY_GROUP_NAME = "agentdock-app"
-INSTANCE_ROLE_NAME = "agentdock-instance-role"
+SECURITY_GROUP_NAME = "maidenrun-app"
+INSTANCE_ROLE_NAME = "maidenrun-instance-role"
 AMI_PARAMETER = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
-PARAMETER_NAMESPACE = "/agentdock"
+PARAMETER_NAMESPACE = "/maidenrun"
 # Reserved name, kept out of the agent's own secrets dict so a private-repo
 # token is never exported into the agent's process environment alongside
 # its real env vars.
@@ -63,7 +63,7 @@ class HealthCheckTimeoutError(Ec2LaunchError):
 
 
 def write_secret_parameters(session: boto3.Session, deployment_id: str, secrets: dict[str, str]) -> None:
-    """Writes each secret as a SecureString under /agentdock/<deployment_id>/<name>.
+    """Writes each secret as a SecureString under /maidenrun/<deployment_id>/<name>.
 
     Never logged, never written anywhere else — the only other place these
     values are read back is the instance's own boot script, over the AWS
@@ -103,7 +103,7 @@ def ensure_app_security_group(session: boto3.Session) -> str:
 
     group_id = ec2.create_security_group(
         GroupName=SECURITY_GROUP_NAME,
-        Description="AgentDock: app instance, port 8001 only",
+        Description="Maidenrun: app instance, port 8001 only",
         VpcId=get_default_vpc_id(ec2),
     )["GroupId"]
     ec2.authorize_security_group_ingress(
@@ -159,7 +159,7 @@ def render_user_data(
         env_lines = "".join(f'    echo "      - {name}"\n' for name in secret_names)
         run_command = (
             'COMPOSE_MAIN="$(ls docker-compose*.y*ml)"\n'
-            "mkdir -p /opt/agentdock\n"
+            "mkdir -p /opt/maidenrun\n"
             "{\n"
             '  echo "services:"\n'
             '  for svc in $(docker compose -f "$COMPOSE_MAIN" config --services); do\n'
@@ -167,8 +167,8 @@ def render_user_data(
             '    echo "    environment:"\n'
             f"{env_lines}"
             "  done\n"
-            "} > /opt/agentdock/compose.env.yml\n"
-            'docker compose -f "$COMPOSE_MAIN" -f /opt/agentdock/compose.env.yml up -d'
+            "} > /opt/maidenrun/compose.env.yml\n"
+            'docker compose -f "$COMPOSE_MAIN" -f /opt/maidenrun/compose.env.yml up -d'
         )
     elif entry_point == "compose":
         run_command = "docker compose up -d"
@@ -299,7 +299,7 @@ def launch_app_instance(
                     {"Key": "deployment_id", "Value": deployment_id},
                     # Never leave an instance nameless in the console — falls back to
                     # something identifiable if the user didn't type one.
-                    {"Key": "Name", "Value": instance_name or f"agentdock-{deployment_id}"},
+                    {"Key": "Name", "Value": instance_name or f"maidenrun-{deployment_id}"},
                 ],
             }
         ],

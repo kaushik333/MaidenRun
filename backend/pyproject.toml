@@ -1,7 +1,7 @@
 [project]
-name = "agentdock-backend"
+name = "maidenrun-backend"
 version = "0.1.0"
-description = "Control plane backend for AgentDock"
+description = "Control plane backend for Maidenrun"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",

@@ -225,7 +225,10 @@ def test_deploy_rolls_back_app_instance_when_health_check_never_passes(_mock_val
     assert states == ["shutting-down"] or states == ["terminated"]
 
 
-@patch("app.api.deploy.get_session", side_effect=NoCredentialsError("No AWS credentials cached yet and none were provided."))
+@patch(
+    "app.api.deploy.get_session",
+    side_effect=NoCredentialsError("No AWS credentials cached yet and none were provided."),
+)
 @patch("app.api.deploy.validate_repo", return_value=VALID_COMPOSE_REPO)
 def test_deploy_returns_401_with_cors_headers_when_no_credentials(_mock_validate, _mock_get_session) -> None:
     response = client.post("/deploy", json=EXTERNAL_LLM_PAYLOAD, headers=CORS_ORIGIN_HEADERS)
@@ -245,7 +248,12 @@ def test_deploy_returns_401_with_cors_headers_when_no_credentials(_mock_validate
 @patch(
     "app.api.deploy.launch_app_instance",
     side_effect=ClientError(
-        {"Error": {"Code": "UnrecognizedClientException", "Message": "The security token included in the request is invalid."}},
+        {
+            "Error": {
+                "Code": "UnrecognizedClientException",
+                "Message": "The security token included in the request is invalid.",
+            }
+        },
         "PutParameter",
     ),
 )
@@ -430,12 +438,19 @@ def test_terminate_returns_401_when_no_credentials_cached() -> None:
 @patch(
     "app.api.deploy.terminate_instance",
     side_effect=ClientError(
-        {"Error": {"Code": "UnrecognizedClientException", "Message": "The security token included in the request is invalid."}},
+        {
+            "Error": {
+                "Code": "UnrecognizedClientException",
+                "Message": "The security token included in the request is invalid.",
+            }
+        },
         "TerminateInstances",
     ),
 )
 @patch("app.api.deploy.get_session")
-def test_terminate_returns_401_with_cors_headers_when_aws_rejects_credentials(_mock_get_session, _mock_terminate) -> None:
+def test_terminate_returns_401_with_cors_headers_when_aws_rejects_credentials(
+    _mock_get_session, _mock_terminate
+) -> None:
     response = client.post(
         "/terminate",
         json={"instance_id": "i-0123456789abcdef0", "region": "us-east-1"},

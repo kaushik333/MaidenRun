@@ -1,7 +1,7 @@
 import re
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal
 
 from botocore.exceptions import ClientError
@@ -215,7 +215,7 @@ def _run_deployment(
             github_token=request.github_token,
             ingress=ingress,
         )
-        launched_at = datetime.now(timezone.utc)
+        launched_at = datetime.now(UTC)
         _set_step(deployment_id, "app_compute", "done")
 
         _set_step(deployment_id, "app_health", "active")

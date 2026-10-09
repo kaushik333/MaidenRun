@@ -61,7 +61,10 @@ def clone_repo(repo_url: str, dest: Path, github_token: str | None = None) -> st
         elif github_token and any(s in stderr for s in ("could not read Password", "Authentication failed")):
             hint = "GitHub rejected the token — it may be expired, revoked, or mistyped."
         elif not github_token and "could not read Username" in stderr:
-            hint = "the repository doesn't exist or is private. Check the URL; for a private repo, add a personal access token."
+            hint = (
+                "the repository doesn't exist or is private. Check the URL; for a private repo, "
+                "add a personal access token."
+            )
         else:
             return f"Could not clone {repo_url}: {stderr}"
         return f"Could not clone {repo_url}: {hint} (git: {stderr})"

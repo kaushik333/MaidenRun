@@ -15,8 +15,18 @@ app.include_router(dashboard_router)
 client = TestClient(app)
 
 SUBMISSION = [
-    {"question": "Did the agent understand your request correctly?", "answer": "Yes", "options": ["Yes", "Partially", "No"], "optional": False},
-    {"question": "Did the agent understand your request correctly?", "answer": "No", "options": ["Yes", "Partially", "No"], "optional": False},
+    {
+        "question": "Did the agent understand your request correctly?",
+        "answer": "Yes",
+        "options": ["Yes", "Partially", "No"],
+        "optional": False,
+    },
+    {
+        "question": "Did the agent understand your request correctly?",
+        "answer": "No",
+        "options": ["Yes", "Partially", "No"],
+        "optional": False,
+    },
     {"question": "Anything specific to add?", "answer": "Worked great.", "options": None, "optional": True},
 ]
 

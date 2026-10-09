@@ -1,7 +1,7 @@
 import json
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal
 
 from botocore.exceptions import ClientError
@@ -151,14 +151,14 @@ def _run_feedback_deployment(
         bundle_bytes = build_bundle(questionnaire_json)
         upload_bundle(session, bucket, key, bundle_bytes)
         bundle_size_bytes = len(bundle_bytes)
-        bundle_uploaded_at = datetime.now(timezone.utc)
+        bundle_uploaded_at = datetime.now(UTC)
         _set_step(deployment_id, "feedback_bundle", "done")
 
         _set_step(deployment_id, "feedback_compute", "active")
         feedback_result = launch_feedback_stack(
             session, deployment_id=deployment_id, bucket=bucket, key=key, instance_name=instance_name, ingress=ingress
         )
-        launched_at = datetime.now(timezone.utc)
+        launched_at = datetime.now(UTC)
         _set_step(deployment_id, "feedback_compute", "done")
 
         _set_step(deployment_id, "feedback_health", "active")
@@ -176,7 +176,7 @@ def _run_feedback_deployment(
         # (a strictly earlier step in its own boot script than answering on
         # either port), so it's safe to clean up here — no race.
         delete_bundle(session, bucket, key)
-        bundle_deleted_at = datetime.now(timezone.utc)
+        bundle_deleted_at = datetime.now(UTC)
 
         feedback_form_url = f"http://{feedback_result['public_ip']}:{settings.feedback_form_port}"
         feedback_dashboard_url = (
@@ -266,7 +266,9 @@ def _run_feedback_deployment(
 
 
 @router.post("/deploy-feedback", response_model=DeployFeedbackAcceptedResponse, status_code=202)
-def deploy_feedback(request: DeployFeedbackRequest, background_tasks: BackgroundTasks) -> DeployFeedbackAcceptedResponse:
+def deploy_feedback(
+    request: DeployFeedbackRequest, background_tasks: BackgroundTasks
+) -> DeployFeedbackAcceptedResponse:
     try:
         json.loads(request.questionnaire_json)
     except json.JSONDecodeError as exc:

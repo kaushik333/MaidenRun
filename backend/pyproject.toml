@@ -26,3 +26,11 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+# pycodestyle errors, pyflakes, import order, modern syntax, common bug patterns
+select = ["E", "F", "I", "UP", "B"]

@@ -1,7 +1,7 @@
 import json
 import os
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -60,7 +60,7 @@ def mark_terminated(deployment_id: str) -> None:
                 return
             record = json.loads(path.read_text())
             record["status"] = "terminated"
-            record["terminated_at"] = datetime.now(timezone.utc).isoformat()
+            record["terminated_at"] = datetime.now(UTC).isoformat()
             _write(path, record)
         except (OSError, json.JSONDecodeError):
             logger.exception("failed to mark deployment %s terminated in history", deployment_id)

@@ -1,8 +1,8 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from app.aws.pricing import EBS_GB_MONTH_RATE, HOURS_PER_MONTH, S3_GB_MONTH_RATE, estimate_ec2_cost, estimate_s3_cost
 
-NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
+NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 def test_estimate_ec2_cost_matches_hand_calculated_value() -> None:
@@ -30,7 +30,9 @@ def test_estimate_s3_cost_freezes_after_deletion() -> None:
     uploaded_at = NOW - timedelta(hours=2)
     deleted_at = NOW - timedelta(hours=1, minutes=55)  # deleted 5 minutes after upload
 
-    cost_at_deletion = estimate_s3_cost(size_bytes=1024**3, uploaded_at=uploaded_at, deleted_at=deleted_at, now=deleted_at)
+    cost_at_deletion = estimate_s3_cost(
+        size_bytes=1024**3, uploaded_at=uploaded_at, deleted_at=deleted_at, now=deleted_at
+    )
     cost_much_later = estimate_s3_cost(
         size_bytes=1024**3, uploaded_at=uploaded_at, deleted_at=deleted_at, now=NOW + timedelta(days=30)
     )

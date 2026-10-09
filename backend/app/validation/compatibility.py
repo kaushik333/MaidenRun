@@ -40,7 +40,11 @@ def compatibility_checklist(repo_dir: Path) -> list[CheckResult]:
         entry_point = "dockerfile"
         checks.append(CheckResult(ok=True, text="Single Dockerfile found at repo root"))
     else:
-        checks.append(CheckResult(ok=False, text="No compose file (compose.yaml / docker-compose.yml) or Dockerfile found at repo root"))
+        checks.append(
+            CheckResult(
+                ok=False, text="No compose file (compose.yaml / docker-compose.yml) or Dockerfile found at repo root"
+            )
+        )
 
     host_ports: dict[int, str] = {}
     parse_error: str | None = None

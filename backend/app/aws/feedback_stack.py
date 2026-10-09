@@ -109,7 +109,9 @@ def launch_feedback_stack(
     )
 
     ami_id, root_device_name = latest_al2023_ami(session)
-    user_data = render_feedback_user_data(deployment_id=deployment_id, region=session.region_name, bucket=bucket, key=key)
+    user_data = render_feedback_user_data(
+        deployment_id=deployment_id, region=session.region_name, bucket=bucket, key=key
+    )
 
     # Only the form and dashboard — never Postgres, which stays on the
     # instance's internal Docker network.

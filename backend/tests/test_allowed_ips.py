@@ -132,7 +132,11 @@ def test_terminate_deletes_the_deployments_security_group(*_mocks) -> None:
 
     response = client.post(
         "/terminate",
-        json={"instance_id": record["instance_id"], "region": record["region"], "deployment_id": record["deployment_id"]},
+        json={
+            "instance_id": record["instance_id"],
+            "region": record["region"],
+            "deployment_id": record["deployment_id"],
+        },
     )
     assert response.status_code == 200
 

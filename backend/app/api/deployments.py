@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from botocore.exceptions import ClientError
@@ -51,7 +51,7 @@ def _compute_cost(raw: dict[str, Any]) -> float | None:
     try:
         deployed_at = datetime.fromisoformat(raw["deployed_at"])
         terminated_at = raw.get("terminated_at")
-        cutoff = datetime.fromisoformat(terminated_at) if terminated_at else datetime.now(timezone.utc)
+        cutoff = datetime.fromisoformat(terminated_at) if terminated_at else datetime.now(UTC)
         decisions = raw.get("decisions") or {}
 
         if raw["kind"] == "agent":

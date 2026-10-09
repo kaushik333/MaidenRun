@@ -52,7 +52,9 @@ def test_create_security_group_raises_clear_error_without_default_vpc(aws_sessio
 
 @mock_aws
 def test_set_security_group_cidrs_adds_and_revokes_to_match(aws_session):
-    group_id = ec2.create_security_group(aws_session, "maidenrun-feedback-x", "test", [8002, 8003], [ec2.OPEN_CIDR], "x")
+    group_id = ec2.create_security_group(
+        aws_session, "maidenrun-feedback-x", "test", [8002, 8003], [ec2.OPEN_CIDR], "x"
+    )
 
     ec2.set_security_group_cidrs(aws_session, group_id, [8002, 8003], ["203.0.113.7/32"])
     assert _ingress(aws_session.client("ec2"), group_id) == {(8002, "203.0.113.7/32"), (8003, "203.0.113.7/32")}
@@ -337,9 +339,10 @@ def test_launch_app_instance_deletes_its_security_group_if_the_launch_fails(aws_
     stub_client = MagicMock(wraps=real_client)
     stub_client.run_instances.side_effect = RuntimeError("launch rejected")
     real_session_client = aws_session.client
-    monkeypatch.setattr(
-        aws_session, "client", lambda name, *a, **kw: stub_client if name == "ec2" else real_session_client(name, *a, **kw)
-    )
+    def client(name, *args, **kwargs):
+        return stub_client if name == "ec2" else real_session_client(name, *args, **kwargs)
+
+    monkeypatch.setattr(aws_session, "client", client)
 
     with pytest.raises(RuntimeError, match="launch rejected"):
         ec2.launch_app_instance(

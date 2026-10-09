@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch/PR cancels the run still in progress.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-tests:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"  # matches the Docker image users actually run
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - run: uv sync --locked --extra dev
+      - run: uv run pytest -q
+
+  feedback-stack-tests:
+    name: Feedback-stack tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: feedback-stack/backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: feedback-stack/backend/uv.lock
+      - run: uv sync --locked --extra dev
+      # The test session starts its own throwaway postgres:16 container via
+      # Docker, which GitHub's Ubuntu runners have preinstalled.
+      - run: uv run pytest -q
+
+  frontend-builds:
+    name: Frontend build (${{ matrix.app }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        app: [frontend, feedback-stack/frontend]
+    defaults:
+      run:
+        working-directory: ${{ matrix.app }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20  # matches the node:20-slim Docker images
+          cache: npm
+          cache-dependency-path: ${{ matrix.app }}/package-lock.json
+      - run: npm ci
+      - run: npm run build
+
+  docker-builds:
+    name: Docker builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Control plane (docker-compose.yml)
+        run: docker compose build
+      - name: Feedback stack (feedback-stack/docker-compose.yml)
+        working-directory: feedback-stack
+        run: docker compose build

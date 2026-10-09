@@ -264,7 +264,7 @@ export default function DeployForm({
 
     if (!res.ok) {
       const detail = Array.isArray(data?.detail)
-        ? data.detail.map((d) => d.msg).join("; ")
+        ? data.detail.map((d) => d.msg.replace(/^Value error, /, "")).join("; ")
         : data?.detail || data?.error || "Deploy failed";
 
       if (res.status === 400 || res.status === 422) {

@@ -10,6 +10,10 @@
   --color-text-faint: #9791a3;
   --color-heading: #3d2467;
   --color-cost: #a3620a;
+  /* translucent "glass" surfaces over the page gradient */
+  --color-card-bg: rgba(255, 255, 255, 0.82);
+  --color-input-bg: rgba(255, 255, 255, 0.9);
+  --color-panel-bg: rgba(255, 255, 255, 0.4);
 
   /* accent palette — violet is the one brand hue; coral survives only in the logo mark */
   --art-violet: #7c3aed;
@@ -50,6 +54,9 @@
   --color-text-faint: #786f88;
   --color-heading: #c9b8f5;
   --color-cost: #f6ad37;
+  --color-card-bg: rgba(28, 24, 38, 0.82);
+  --color-input-bg: rgba(255, 255, 255, 0.05);
+  --color-panel-bg: rgba(255, 255, 255, 0.03);
 
   --color-primary-soft: rgba(124, 58, 237, 0.18);
   --color-primary-soft-border: rgba(124, 58, 237, 0.4);
@@ -258,7 +265,7 @@ body {
   border-radius: 999px;
   font-size: 0.8rem;
   font-weight: 600;
-  background: rgba(255, 255, 255, 0.7);
+  background: var(--color-card-bg);
   backdrop-filter: blur(6px);
   border: 1px solid var(--color-border);
   color: var(--color-text-muted);
@@ -325,7 +332,7 @@ body {
 }
 
 .card {
-  background: rgba(255, 255, 255, 0.82);
+  background: var(--color-card-bg);
   backdrop-filter: blur(22px) saturate(160%);
   -webkit-backdrop-filter: blur(22px) saturate(160%);
   border-radius: var(--radius-lg);
@@ -395,7 +402,7 @@ body {
   font-size: 0.92rem;
   font-family: inherit;
   color: var(--color-text);
-  background: rgba(255, 255, 255, 0.9);
+  background: var(--color-input-bg);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
@@ -489,7 +496,7 @@ body {
   border: 1px dashed var(--color-border);
   border-radius: var(--radius-md);
   padding: 0.9rem 1rem;
-  background: rgba(255, 255, 255, 0.4);
+  background: var(--color-panel-bg);
 }
 
 .advanced summary {

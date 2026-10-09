@@ -90,7 +90,7 @@ export default function CostMonitor({
     }
 
     if (!res.ok) {
-      const detail = Array.isArray(data?.detail) ? data.detail.map((d) => d.msg).join("; ") : data?.detail;
+      const detail = Array.isArray(data?.detail) ? data.detail.map((d) => d.msg.replace(/^Value error, /, "")).join("; ") : data?.detail;
       setError(detail || "Terminate failed");
       setTerminating(false);
       return;

@@ -1,13 +1,19 @@
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from fastapi import APIRouter
-from pydantic import BaseModel
+from botocore.exceptions import ClientError
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field, field_validator
 
+from app.api.deploy import resolve_ingress
+from app.aws.credentials import NoCredentialsError, get_session
+from app.aws.ec2 import normalize_allowed_ips, set_security_group_cidrs
 from app.aws.feedback_stack import EBS_SIZE_GB as FEEDBACK_EBS_SIZE_GB
 from app.aws.feedback_stack import INSTANCE_TYPE as FEEDBACK_INSTANCE_TYPE
 from app.aws.pricing import estimate_ec2_cost, estimate_s3_cost
 from app.core import history
+from app.core.config import settings
+from app.core.errors import reraise_as_http_error
 from app.core.logging import logger
 
 router = APIRouter()
@@ -27,6 +33,9 @@ class DeploymentRecord(BaseModel):
     region: str
     instance_id: str
     instance_name: str | None = None
+    # Only set for deployments with their own security group (i.e. an
+    # editable IP allowlist) — older ones share one and have none recorded.
+    security_group_id: str | None = None
     links: list[DeploymentLink]
     decisions: dict[str, Any] = {}
     cost_estimate_usd: float | None = None
@@ -82,3 +91,41 @@ def list_deployments() -> list[DeploymentRecord]:
         except Exception:
             logger.exception("skipping invalid deployment history record: %s", raw.get("deployment_id"))
     return records
+
+
+class AllowedIpsRequest(BaseModel):
+    allowed_ips: list[str] = Field(default_factory=list)
+
+    _normalize_allowed_ips = field_validator("allowed_ips")(normalize_allowed_ips)
+
+
+@router.put("/deployments/{deployment_id}/allowed-ips", response_model=DeploymentRecord)
+def update_allowed_ips(deployment_id: str, request: AllowedIpsRequest) -> DeploymentRecord:
+    """Edits a running deployment's IP allowlist in place — only its security
+    group's rules change, so there's no redeploy and no restart."""
+    raw = history.get_deployment(deployment_id)
+    if raw is None:
+        raise HTTPException(status_code=404, detail="Unknown deployment_id")
+    if raw.get("status") != "running" or not raw.get("security_group_id"):
+        raise HTTPException(
+            status_code=409,
+            detail="Only running deployments made with an editable IP allowlist can be changed — redeploy older ones.",
+        )
+
+    if raw["kind"] == "agent":
+        ports = [settings.app_port]
+    else:
+        ports = [settings.feedback_form_port, settings.feedback_dashboard_port]
+    ingress = resolve_ingress(request.allowed_ips)
+    try:
+        set_security_group_cidrs(get_session(region=raw["region"]), raw["security_group_id"], ports, ingress)
+    except NoCredentialsError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except ClientError as exc:
+        reraise_as_http_error(exc)
+
+    raw.setdefault("decisions", {})["allowed_ips"] = request.allowed_ips
+    history.record_deployment(raw)
+    record = DeploymentRecord(**raw)
+    record.cost_estimate_usd = _compute_cost(raw)
+    return record

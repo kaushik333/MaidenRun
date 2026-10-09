@@ -6,12 +6,15 @@ from typing import Literal
 
 from botocore.exceptions import ClientError
 from fastapi import APIRouter, BackgroundTasks, HTTPException
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.aws.credentials import NoCredentialsError, get_session
 from app.aws.ec2 import (
     REPO_TOKEN_PARAM_NAME,
+    delete_security_group_after_termination,
+    ingress_cidrs,
     launch_app_instance,
+    normalize_allowed_ips,
     terminate_instance,
     wait_for_port_health,
 )
@@ -77,6 +80,10 @@ class DeployRequest(BaseModel):
     base_url_name: str | None = None
     base_url_value: str | None = None
     env_vars: list[EnvVar] = Field(default_factory=list)
+    # IPv4 addresses/ranges allowed to reach :8001 — empty means everyone.
+    allowed_ips: list[str] = Field(default_factory=list)
+
+    _normalize_allowed_ips = field_validator("allowed_ips")(normalize_allowed_ips)
 
     @model_validator(mode="after")
     def check_fields(self) -> "DeployRequest":
@@ -183,6 +190,7 @@ def _run_deployment(
     request: DeployRequest,
     entry_point: str,
     app_secrets: dict,
+    ingress: list[str],
 ) -> None:
     """Launches the app instance and waits for it to become healthy, in a
     background thread — independent of whether the browser stays connected:
@@ -205,6 +213,7 @@ def _run_deployment(
             secrets=app_secrets,
             instance_name=request.instance_name,
             github_token=request.github_token,
+            ingress=ingress,
         )
         launched_at = datetime.now(timezone.utc)
         _set_step(deployment_id, "app_compute", "done")
@@ -233,6 +242,7 @@ def _run_deployment(
             "terminated_at": None,
             "region": request.aws.region,
             "instance_id": app_result["instance_id"],
+            "security_group_id": app_result["security_group_id"],
             "instance_name": request.instance_name,
             "links": [{"label": "Agent UI", "url": app_url}],
             "decisions": {
@@ -243,6 +253,7 @@ def _run_deployment(
                 "instance_type": request.instance_type,
                 "ebs_size_gb": request.ebs_size_gb,
                 "env_var_keys": [ev.key for ev in request.env_vars],
+                "allowed_ips": request.allowed_ips,
             },
         })
     except Exception as exc:  # deliberately broad — terminal handler for the whole background flow
@@ -274,6 +285,10 @@ def _run_deployment(
         _, message = classify_error(exc)
         with _deployments_lock:
             _deployments[deployment_id].error = f"{message}{rollback_note}"
+        if app_result:
+            delete_security_group_after_termination(
+                app_session, app_result["security_group_id"], app_result["instance_id"]
+            )
 
 
 @router.post("/deploy", response_model=DeployAcceptedResponse, status_code=202)
@@ -292,13 +307,14 @@ def deploy(request: DeployRequest, background_tasks: BackgroundTasks) -> DeployA
         app_session = get_session(request.aws.access_key_id, request.aws.secret_access_key, region=request.aws.region)
     except NoCredentialsError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
+    ingress = resolve_ingress(request.allowed_ips)
 
     deployment_id = uuid.uuid4().hex[:12]
     with _deployments_lock:
         _deployments[deployment_id] = _new_deployment_status()
 
     background_tasks.add_task(
-        _run_deployment, deployment_id, app_session, request, validation.entry_point, app_secrets
+        _run_deployment, deployment_id, app_session, request, validation.entry_point, app_secrets, ingress
     )
     return DeployAcceptedResponse(deployment_id=deployment_id)
 
@@ -326,7 +342,7 @@ def deploy_cost_estimate(deployment_id: str) -> CostEstimate:
 
 
 @router.post("/terminate", response_model=TerminateResponse)
-def terminate(request: TerminateRequest) -> TerminateResponse:
+def terminate(request: TerminateRequest, background_tasks: BackgroundTasks) -> TerminateResponse:
     # No access key/secret here on purpose — this is exactly the case the local
     # credential cache (Phase 4) exists for: reauthentication for an action after
     # the initial deploy should never require re-pasting the key.
@@ -340,8 +356,26 @@ def terminate(request: TerminateRequest) -> TerminateResponse:
 
     if request.deployment_id:
         history.mark_terminated(request.deployment_id)
+        # Deployments made before per-deployment security groups share one
+        # and have no id recorded — that shared group is left alone.
+        group_id = (history.get_deployment(request.deployment_id) or {}).get("security_group_id")
+        if group_id:
+            background_tasks.add_task(delete_security_group_after_termination, session, group_id, request.instance_id)
 
     return TerminateResponse(status="terminating")
+
+
+def resolve_ingress(allowed_ips: list[str]) -> list[str]:
+    """ingress_cidrs() with its one network failure mode turned into a clear
+    error before anything touches AWS. Shared by both deploy endpoints and
+    the allowed-IPs editor."""
+    try:
+        return ingress_cidrs(allowed_ips)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not look up your public IP (needed so an IP allowlist never locks you out): {exc}",
+        ) from exc
 
 
 def rehydrate_agent_deployments() -> None:

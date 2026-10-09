@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { BACKEND_URL } from "./config";
 import { apiFetch } from "./apiClient";
+import AllowedIpsField, { parseAllowedIps } from "./AllowedIpsField.jsx";
 import AwsSetupGuide from "./AwsSetupGuide.jsx";
 import CostMonitor from "./CostMonitor.jsx";
 import DeploySteps from "./DeploySteps.jsx";
@@ -53,6 +54,7 @@ const initialState = {
   base_url_name: "",
   base_url_value: "",
   env_vars: [],
+  allowed_ips: "",
 };
 
 const IDLE_REPO_CHECK = { status: "idle", entry_point: null, error: null };
@@ -236,6 +238,7 @@ export default function DeployForm({
       api_key_value: form.api_key_value || null,
       base_url_name: form.base_url_name.trim() || null,
       base_url_value: form.base_url_value.trim() || null,
+      allowed_ips: parseAllowedIps(form.allowed_ips),
     };
 
     setStepStatus("validate", "active");
@@ -488,6 +491,18 @@ export default function DeployForm({
               />
             </div>
           </div>
+        </section>
+
+        <section className="form-section">
+          <div className="section-heading">
+            <h2 className="section-title">Access</h2>
+            <span className="section-hint">Who can open the agent on :8001. Editable later from the Deployments tab.</span>
+          </div>
+          <AllowedIpsField
+            id="app_allowed_ips"
+            value={form.allowed_ips}
+            onChange={(value) => setForm((f) => ({ ...f, allowed_ips: value }))}
+          />
         </section>
 
         <details className="advanced">

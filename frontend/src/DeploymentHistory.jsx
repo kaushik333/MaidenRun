@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { BACKEND_URL } from "./config";
 import { apiFetch } from "./apiClient";
+import AllowedIpsField, { parseAllowedIps } from "./AllowedIpsField.jsx";
 
 // Mirrors backend/app/api/deploy.py's AWS_REGIONS — same curated list,
 // duplicated the same way DeployForm.jsx and DeployFeedbackStack.jsx do.
@@ -65,6 +66,85 @@ function DecisionsList({ decisions }) {
         {envKeys?.length > 0 && <li>Env vars: {envKeys.join(", ")}</li>}
       </ul>
     </details>
+  );
+}
+
+function AccessControl({ record, onChanged }) {
+  const allowed = record.decisions?.allowed_ips || [];
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+
+  function startEditing() {
+    setText(allowed.join("\n"));
+    setError(null);
+    setEditing(true);
+  }
+
+  async function save() {
+    setSaving(true);
+    setError(null);
+    let res;
+    try {
+      res = await apiFetch(`${BACKEND_URL}/deployments/${record.deployment_id}/allowed-ips`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ allowed_ips: parseAllowedIps(text) }),
+      });
+    } catch {
+      setError("Could not reach the backend");
+      setSaving(false);
+      return;
+    }
+    const data = await res.json().catch(() => null);
+    setSaving(false);
+    if (!res.ok) {
+      setError(
+        Array.isArray(data?.detail) ? data.detail.map((d) => d.msg.replace(/^Value error, /, "")).join("; ") : data?.detail || "Update failed"
+      );
+      return;
+    }
+    setEditing(false);
+    onChanged();
+  }
+
+  // Deployments made before per-deployment security groups share one, so
+  // their access can't be changed without a redeploy.
+  if (!record.security_group_id) {
+    return (
+      <div className="history-access">
+        <span>Access: open to everyone (redeploy to restrict by IP)</span>
+      </div>
+    );
+  }
+
+  if (!editing) {
+    return (
+      <div className="history-access">
+        <div className="history-access-summary">
+          <span>Access: {allowed.length ? `${allowed.join(", ")} + your IP` : "open to everyone"}</span>
+          <button type="button" className="link-btn" onClick={startEditing}>
+            Edit allowed IPs
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="history-access">
+      <AllowedIpsField id={`allowed_ips_${record.deployment_id}`} value={text} onChange={setText} disabled={saving} />
+      <div className="history-access-actions">
+        <button type="button" className="check-btn" disabled={saving} onClick={save}>
+          {saving ? "Saving…" : "Save"}
+        </button>
+        <button type="button" className="link-btn" disabled={saving} onClick={() => setEditing(false)}>
+          Cancel
+        </button>
+      </div>
+      {error && <p className="terminate-error">{error}</p>}
+    </div>
   );
 }
 
@@ -159,6 +239,8 @@ function DeploymentRow({ record, onChanged, onTerminated }) {
       )}
 
       <DecisionsList decisions={record.decisions} />
+
+      {record.status === "running" && <AccessControl record={record} onChanged={onChanged} />}
 
       {record.status === "running" && !confirming && (
         <button type="button" className="terminate-btn" onClick={() => setConfirming(true)}>

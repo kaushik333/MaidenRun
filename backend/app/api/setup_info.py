@@ -2,10 +2,10 @@ import json
 import os
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from app.aws.ec2 import INSTANCE_ROLE_NAME
+from app.aws.ec2 import INSTANCE_ROLE_NAME, my_public_ip
 
 # The Docker image sets INFRA_DIR explicitly (see backend/Dockerfile) since
 # its directory depth relative to this file isn't the same as a local
@@ -32,3 +32,17 @@ def setup_info() -> SetupInfo:
         instance_role_name=INSTANCE_ROLE_NAME,
         instance_role_policy=json.loads((INFRA_DIR / "instance-role-policy.json").read_text()),
     )
+
+
+class MyIp(BaseModel):
+    ip: str
+
+
+@router.get("/my-ip", response_model=MyIp)
+def my_ip() -> MyIp:
+    """The public IP every IP allowlist automatically includes — shown in the
+    deploy forms so the user knows they can't lock themselves out."""
+    try:
+        return MyIp(ip=my_public_ip())
+    except OSError as exc:
+        raise HTTPException(status_code=502, detail=f"Could not look up your public IP: {exc}") from exc

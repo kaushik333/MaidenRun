@@ -66,6 +66,13 @@ def mark_terminated(deployment_id: str) -> None:
             logger.exception("failed to mark deployment %s terminated in history", deployment_id)
 
 
+def get_deployment(deployment_id: str) -> dict[str, Any] | None:
+    try:
+        return json.loads(_file_path(deployment_id).read_text())
+    except FileNotFoundError:
+        return None
+
+
 def list_deployments() -> list[dict[str, Any]]:
     records = []
     for file in _history_dir().glob("*.json"):

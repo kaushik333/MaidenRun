@@ -5,8 +5,9 @@ import boto3
 from app.aws.ec2 import (
     DOCKER_INSTALL,
     INSTANCE_ROLE_NAME,
+    OPEN_CIDR,
     PARAMETER_NAMESPACE,
-    get_default_vpc_id,
+    create_security_group,
     latest_al2023_ami,
     wait_for_public_ip,
     write_secret_parameters,
@@ -14,6 +15,7 @@ from app.aws.ec2 import (
 from app.core.config import settings
 from app.core.logging import logger
 
+# Prefix of each feedback deployment's own security group: maidenrun-feedback-<deployment_id>
 SECURITY_GROUP_NAME = "maidenrun-feedback"
 
 # Fixed, not user-configurable: a form + dashboard + Postgres don't need to
@@ -21,36 +23,6 @@ SECURITY_GROUP_NAME = "maidenrun-feedback"
 # mirrors the frontend's FEEDBACK_INSTANCE_TYPE/FEEDBACK_EBS_SIZE_GB).
 INSTANCE_TYPE = "t3.small"
 EBS_SIZE_GB = 20
-
-
-def ensure_feedback_security_group(session: boto3.Session) -> str:
-    """Creates (or reuses) the security group that opens only 8002/8003 —
-    never Postgres, which stays on the instance's internal Docker network."""
-    ec2 = session.client("ec2")
-    existing = ec2.describe_security_groups(Filters=[{"Name": "group-name", "Values": [SECURITY_GROUP_NAME]}])[
-        "SecurityGroups"
-    ]
-    if existing:
-        return existing[0]["GroupId"]
-
-    group_id = ec2.create_security_group(
-        GroupName=SECURITY_GROUP_NAME,
-        Description="MaidenRun: feedback stack, ports 8002/8003 only",
-        VpcId=get_default_vpc_id(ec2),
-    )["GroupId"]
-    ec2.authorize_security_group_ingress(
-        GroupId=group_id,
-        IpPermissions=[
-            {
-                "IpProtocol": "tcp",
-                "FromPort": port,
-                "ToPort": port,
-                "IpRanges": [{"CidrIp": "0.0.0.0/0"}],
-            }
-            for port in (settings.feedback_form_port, settings.feedback_dashboard_port)
-        ],
-    )
-    return group_id
 
 
 def render_feedback_user_data(deployment_id: str, region: str, bucket: str, key: str) -> str:
@@ -112,10 +84,11 @@ def launch_feedback_stack(
     bucket: str,
     key: str,
     instance_name: str | None = None,
+    ingress: list[str] = (OPEN_CIDR,),
 ) -> dict:
     """Provisions the feedback-stack EC2 instance.
 
-    Returns {"instance_id", "public_ip", "dashboard_token"}. Same "returns
+    Returns {"instance_id", "public_ip", "dashboard_token", "security_group_id"}. Same "returns
     once it has a public IP, not once the containers are actually serving"
     caveat as launch_app_instance — health is checked separately.
 
@@ -135,32 +108,53 @@ def launch_feedback_stack(
         session, deployment_id, {"POSTGRES_PASSWORD": postgres_password, "DASHBOARD_TOKEN": dashboard_token}
     )
 
-    security_group_id = ensure_feedback_security_group(session)
     ami_id, root_device_name = latest_al2023_ami(session)
     user_data = render_feedback_user_data(deployment_id=deployment_id, region=session.region_name, bucket=bucket, key=key)
 
-    ec2 = session.client("ec2")
-    response = ec2.run_instances(
-        ImageId=ami_id,
-        InstanceType=INSTANCE_TYPE,
-        MinCount=1,
-        MaxCount=1,
-        SecurityGroupIds=[security_group_id],
-        IamInstanceProfile={"Name": INSTANCE_ROLE_NAME},
-        UserData=user_data,
-        BlockDeviceMappings=[{"DeviceName": root_device_name, "Ebs": {"VolumeSize": EBS_SIZE_GB, "VolumeType": "gp3"}}],
-        TagSpecifications=[
-            {
-                "ResourceType": "instance",
-                "Tags": [
-                    {"Key": "deployment_id", "Value": deployment_id},
-                    {"Key": "Name", "Value": instance_name or f"maidenrun-{deployment_id}-feedback"},
-                ],
-            }
-        ],
+    # Only the form and dashboard — never Postgres, which stays on the
+    # instance's internal Docker network.
+    ports = [settings.feedback_form_port, settings.feedback_dashboard_port]
+    security_group_id = create_security_group(
+        session,
+        name=f"{SECURITY_GROUP_NAME}-{deployment_id}",
+        description=f"MaidenRun: feedback stack {deployment_id}, ports {ports[0]}/{ports[1]}",
+        ports=ports,
+        cidrs=list(ingress),
+        deployment_id=deployment_id,
     )
+    ec2 = session.client("ec2")
+    try:
+        response = ec2.run_instances(
+            ImageId=ami_id,
+            InstanceType=INSTANCE_TYPE,
+            MinCount=1,
+            MaxCount=1,
+            SecurityGroupIds=[security_group_id],
+            IamInstanceProfile={"Name": INSTANCE_ROLE_NAME},
+            UserData=user_data,
+            BlockDeviceMappings=[
+                {"DeviceName": root_device_name, "Ebs": {"VolumeSize": EBS_SIZE_GB, "VolumeType": "gp3"}}
+            ],
+            TagSpecifications=[
+                {
+                    "ResourceType": "instance",
+                    "Tags": [
+                        {"Key": "deployment_id", "Value": deployment_id},
+                        {"Key": "Name", "Value": instance_name or f"maidenrun-{deployment_id}-feedback"},
+                    ],
+                }
+            ],
+        )
+    except Exception:
+        ec2.delete_security_group(GroupId=security_group_id)  # no instance, so nothing else would clean it up
+        raise
     instance_id = response["Instances"][0]["InstanceId"]
     logger.info("launched feedback stack instance %s for deployment %s", instance_id, deployment_id)
 
     public_ip = wait_for_public_ip(ec2, instance_id)
-    return {"instance_id": instance_id, "public_ip": public_ip, "dashboard_token": dashboard_token}
+    return {
+        "instance_id": instance_id,
+        "public_ip": public_ip,
+        "dashboard_token": dashboard_token,
+        "security_group_id": security_group_id,
+    }

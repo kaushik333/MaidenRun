@@ -6,10 +6,17 @@ from typing import Literal
 
 from botocore.exceptions import ClientError
 from fastapi import APIRouter, BackgroundTasks, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
+from app.api.deploy import resolve_ingress
 from app.aws.credentials import NoCredentialsError, get_session
-from app.aws.ec2 import HealthCheckTimeoutError, terminate_instance, wait_for_port_health
+from app.aws.ec2 import (
+    HealthCheckTimeoutError,
+    delete_security_group_after_termination,
+    normalize_allowed_ips,
+    terminate_instance,
+    wait_for_port_health,
+)
 from app.aws.feedback_stack import EBS_SIZE_GB, INSTANCE_TYPE, launch_feedback_stack
 from app.aws.pricing import EC2_HOURLY_RATES, estimate_ec2_cost, estimate_s3_cost
 from app.aws.s3_bundle import (
@@ -49,6 +56,10 @@ class DeployFeedbackRequest(BaseModel):
     # plane's; this layer only confirms it's non-empty, valid JSON before
     # ever touching AWS.
     questionnaire_json: str = Field(min_length=1)
+    # IPv4 addresses/ranges allowed to reach :8002/:8003 — empty means everyone.
+    allowed_ips: list[str] = Field(default_factory=list)
+
+    _normalize_allowed_ips = field_validator("allowed_ips")(normalize_allowed_ips)
 
 
 class DeployFeedbackResult(BaseModel):
@@ -120,6 +131,8 @@ def _run_feedback_deployment(
     region: str,
     instance_name: str | None,
     questionnaire_json: str,
+    allowed_ips: list[str],
+    ingress: list[str],
 ) -> None:
     """Uploads the bundle, launches the feedback-stack instance, and waits
     for it to become healthy — in a background thread, independent of
@@ -143,7 +156,7 @@ def _run_feedback_deployment(
 
         _set_step(deployment_id, "feedback_compute", "active")
         feedback_result = launch_feedback_stack(
-            session, deployment_id=deployment_id, bucket=bucket, key=key, instance_name=instance_name
+            session, deployment_id=deployment_id, bucket=bucket, key=key, instance_name=instance_name, ingress=ingress
         )
         launched_at = datetime.now(timezone.utc)
         _set_step(deployment_id, "feedback_compute", "done")
@@ -189,6 +202,7 @@ def _run_feedback_deployment(
             "terminated_at": None,
             "region": region,
             "instance_id": feedback_result["instance_id"],
+            "security_group_id": feedback_result["security_group_id"],
             "instance_name": instance_name,
             "links": [
                 {"label": "Feedback form", "url": feedback_form_url},
@@ -198,6 +212,7 @@ def _run_feedback_deployment(
                 "bundle_size_bytes": bundle_size_bytes,
                 "bundle_uploaded_at": bundle_uploaded_at.isoformat(),
                 "bundle_deleted_at": bundle_deleted_at.isoformat(),
+                "allowed_ips": allowed_ips,
             },
         })
     except Exception as exc:  # deliberately broad — terminal handler for the whole background flow
@@ -244,6 +259,10 @@ def _run_feedback_deployment(
             )
         with _feedback_deployments_lock:
             _feedback_deployments[deployment_id].error = f"{message}{rollback_note}"
+        if feedback_result:
+            delete_security_group_after_termination(
+                session, feedback_result["security_group_id"], feedback_result["instance_id"]
+            )
 
 
 @router.post("/deploy-feedback", response_model=DeployFeedbackAcceptedResponse, status_code=202)
@@ -257,6 +276,7 @@ def deploy_feedback(request: DeployFeedbackRequest, background_tasks: Background
         session = get_session(request.aws.access_key_id, request.aws.secret_access_key, region=request.aws.region)
     except NoCredentialsError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
+    ingress = resolve_ingress(request.allowed_ips)
 
     deployment_id = uuid.uuid4().hex[:12]
     with _feedback_deployments_lock:
@@ -269,6 +289,8 @@ def deploy_feedback(request: DeployFeedbackRequest, background_tasks: Background
         request.aws.region,
         request.instance_name,
         request.questionnaire_json,
+        request.allowed_ips,
+        ingress,
     )
     return DeployFeedbackAcceptedResponse(deployment_id=deployment_id)
 

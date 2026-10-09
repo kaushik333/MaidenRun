@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { BACKEND_URL } from "./config";
 import { apiFetch } from "./apiClient";
+import AllowedIpsField, { parseAllowedIps } from "./AllowedIpsField.jsx";
 import CostMonitor from "./CostMonitor.jsx";
 import DeploySteps from "./DeploySteps.jsx";
 import PasswordField from "./PasswordField.jsx";
@@ -37,6 +38,7 @@ const initialState = {
   secret_access_key: "",
   region: AWS_REGIONS[0],
   instance_name: "",
+  allowed_ips: "",
 };
 
 export default function DeployFeedbackStack({ onDeploySuccess, lastAwsRegion, onTerminated, terminatedIds }) {
@@ -141,6 +143,7 @@ export default function DeployFeedbackStack({ onDeploySuccess, lastAwsRegion, on
       },
       instance_name: form.instance_name.trim() || null,
       questionnaire_json: questionnaireText,
+      allowed_ips: parseAllowedIps(form.allowed_ips),
     };
 
     setStepStatus("feedback_bundle", "active");
@@ -273,6 +276,20 @@ export default function DeployFeedbackStack({ onDeploySuccess, lastAwsRegion, on
                 onChange={(e) => updateField("instance_name", e.target.value)}
               />
             </div>
+          </section>
+
+          <section className="form-section">
+            <div className="section-heading">
+              <h2 className="section-title">Access</h2>
+              <span className="section-hint">
+                Who can open the form (:8002) and dashboard (:8003). Editable later from the Deployments tab.
+              </span>
+            </div>
+            <AllowedIpsField
+              id="feedback_allowed_ips"
+              value={form.allowed_ips}
+              onChange={(value) => updateField("allowed_ips", value)}
+            />
           </section>
 
           <button type="submit" className="submit-btn" disabled={submitting || !questionnaireFile}>

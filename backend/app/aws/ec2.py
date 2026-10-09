@@ -1,13 +1,19 @@
+import ipaddress
 import time
 import urllib.error
 import urllib.request
 
 import boto3
+from botocore.exceptions import ClientError
 
 from app.core.config import settings
 from app.core.logging import logger
 
+# Prefix of each app deployment's own security group: maidenrun-app-<deployment_id>
 SECURITY_GROUP_NAME = "maidenrun-app"
+OPEN_CIDR = "0.0.0.0/0"
+MAX_ALLOWED_IPS = 50
+CHECKIP_URL = "https://checkip.amazonaws.com"
 INSTANCE_ROLE_NAME = "maidenrun-instance-role"
 AMI_PARAMETER = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
 PARAMETER_NAMESPACE = "/maidenrun"
@@ -92,32 +98,102 @@ def get_default_vpc_id(ec2) -> str:
     return default_vpcs[0]["VpcId"]
 
 
-def ensure_app_security_group(session: boto3.Session) -> str:
-    """Creates (or reuses) the security group that opens only 8001 for app instances."""
-    ec2 = session.client("ec2")
-    existing = ec2.describe_security_groups(Filters=[{"Name": "group-name", "Values": [SECURITY_GROUP_NAME]}])[
-        "SecurityGroups"
-    ]
-    if existing:
-        return existing[0]["GroupId"]
+def normalize_allowed_ips(entries: list[str]) -> list[str]:
+    """Validates user-entered IPv4 addresses/ranges and returns them as CIDRs
+    ("203.0.113.7" -> "203.0.113.7/32"). IPv4 only: instances get no IPv6
+    address in the default VPC, so an IPv6 entry could never match."""
+    cidrs: list[str] = []
+    for entry in entries:
+        try:
+            network = ipaddress.ip_network(entry.strip(), strict=False)
+        except ValueError:
+            raise ValueError(f"{entry!r} is not a valid IPv4 address or range") from None
+        if network.version != 4:
+            raise ValueError(f"{entry!r} is IPv6 — instances only have IPv4 addresses, use IPv4")
+        if str(network) not in cidrs:
+            cidrs.append(str(network))
+    if len(cidrs) > MAX_ALLOWED_IPS:
+        raise ValueError(f"At most {MAX_ALLOWED_IPS} allowed IPs/ranges (AWS caps rules per security group)")
+    return cidrs
 
+
+def my_public_ip() -> str:
+    """This machine's public IPv4 address, as AWS sees it."""
+    with urllib.request.urlopen(CHECKIP_URL, timeout=10) as response:
+        return response.read().decode().strip()
+
+
+def ingress_cidrs(allowed_ips: list[str]) -> list[str]:
+    """What a deployment's security group actually admits: everyone for an
+    empty allowlist; otherwise the allowlist plus this machine's own IP —
+    the control plane health-checks the instance from here, and the user
+    needs the dashboard, so it can never be locked out."""
+    if not allowed_ips:
+        return [OPEN_CIDR]
+    own = f"{my_public_ip()}/32"
+    return allowed_ips if own in allowed_ips else [*allowed_ips, own]
+
+
+def set_security_group_cidrs(session: boto3.Session, group_id: str, ports: list[int], cidrs: list[str]) -> None:
+    """Makes the group admit exactly `cidrs` on each of `ports`, adding what's
+    missing before revoking what's no longer listed (so access never drops to
+    nothing mid-update). Takes effect within seconds; the instance is untouched."""
+    ec2 = session.client("ec2")
+    group = ec2.describe_security_groups(GroupIds=[group_id])["SecurityGroups"][0]
+    current = {(p["FromPort"], r["CidrIp"]) for p in group["IpPermissions"] for r in p.get("IpRanges", [])}
+    wanted = {(port, cidr) for port in ports for cidr in cidrs}
+
+    def permissions(pairs: set) -> list[dict]:
+        return [
+            {"IpProtocol": "tcp", "FromPort": port, "ToPort": port, "IpRanges": [{"CidrIp": cidr}]}
+            for port, cidr in sorted(pairs)
+        ]
+
+    if wanted - current:
+        ec2.authorize_security_group_ingress(GroupId=group_id, IpPermissions=permissions(wanted - current))
+    if current - wanted:
+        ec2.revoke_security_group_ingress(GroupId=group_id, IpPermissions=permissions(current - wanted))
+    logger.info("security group %s now admits %s on ports %s", group_id, cidrs, ports)
+
+
+def create_security_group(
+    session: boto3.Session, name: str, description: str, ports: list[int], cidrs: list[str], deployment_id: str
+) -> str:
+    """One group per deployment, so its allowlist can be edited later without
+    touching any other deployment."""
+    ec2 = session.client("ec2")
     group_id = ec2.create_security_group(
-        GroupName=SECURITY_GROUP_NAME,
-        Description="MaidenRun: app instance, port 8001 only",
+        GroupName=name,
+        Description=description,
         VpcId=get_default_vpc_id(ec2),
-    )["GroupId"]
-    ec2.authorize_security_group_ingress(
-        GroupId=group_id,
-        IpPermissions=[
-            {
-                "IpProtocol": "tcp",
-                "FromPort": settings.app_port,
-                "ToPort": settings.app_port,
-                "IpRanges": [{"CidrIp": "0.0.0.0/0"}],
-            }
+        TagSpecifications=[
+            {"ResourceType": "security-group", "Tags": [{"Key": "deployment_id", "Value": deployment_id}]}
         ],
-    )
+    )["GroupId"]
+    set_security_group_cidrs(session, group_id, ports, cidrs)
     return group_id
+
+
+def delete_security_group_after_termination(session: boto3.Session, group_id: str, instance_id: str) -> None:
+    """Background task after /terminate: AWS refuses to delete a group still
+    attached to an instance, so wait for the instance to finish terminating
+    first. Its network interface can lag a few seconds behind that, hence
+    the short retry on DependencyViolation."""
+    ec2 = session.client("ec2")
+    try:
+        ec2.get_waiter("instance_terminated").wait(InstanceIds=[instance_id])
+        for _ in range(6):
+            try:
+                ec2.delete_security_group(GroupId=group_id)
+                logger.info("deleted security group %s", group_id)
+                return
+            except ClientError as exc:
+                if exc.response["Error"]["Code"] != "DependencyViolation":
+                    raise
+                time.sleep(10)
+        logger.error("security group %s still in use after retries — delete it from the EC2 console", group_id)
+    except Exception:
+        logger.exception("could not delete security group %s — delete it from the EC2 console", group_id)
 
 
 def latest_al2023_ami(session: boto3.Session) -> tuple[str, str]:
@@ -257,8 +333,10 @@ def launch_app_instance(
     secrets: dict[str, str],
     instance_name: str | None = None,
     github_token: str | None = None,
+    ingress: list[str] = (OPEN_CIDR,),
 ) -> dict:
-    """Provisions the app EC2 instance and returns {"instance_id", "public_ip"}.
+    """Provisions the app EC2 instance and returns {"instance_id", "public_ip",
+    "security_group_id"}. `ingress` is the CIDR list from ingress_cidrs().
 
     Note: this returns as soon as AWS assigns a public IP (seconds), not
     once the agent itself is actually serving :8001 — Docker install +
@@ -271,7 +349,6 @@ def launch_app_instance(
         # it is not one of the agent's own env vars, and must never be
         # exported into the agent's process alongside them.
         write_secret_parameters(session, deployment_id, {REPO_TOKEN_PARAM_NAME: github_token})
-    security_group_id = ensure_app_security_group(session)
     ami_id, root_device_name = latest_al2023_ami(session)
     user_data = render_user_data(
         repo_url=repo_url,
@@ -282,33 +359,47 @@ def launch_app_instance(
         needs_repo_token=bool(github_token),
     )
 
-    ec2 = session.client("ec2")
-    response = ec2.run_instances(
-        ImageId=ami_id,
-        InstanceType=instance_type,
-        MinCount=1,
-        MaxCount=1,
-        SecurityGroupIds=[security_group_id],
-        IamInstanceProfile={"Name": INSTANCE_ROLE_NAME},
-        UserData=user_data,
-        BlockDeviceMappings=[{"DeviceName": root_device_name, "Ebs": {"VolumeSize": ebs_size_gb, "VolumeType": "gp3"}}],
-        TagSpecifications=[
-            {
-                "ResourceType": "instance",
-                "Tags": [
-                    {"Key": "deployment_id", "Value": deployment_id},
-                    # Never leave an instance nameless in the console — falls back to
-                    # something identifiable if the user didn't type one.
-                    {"Key": "Name", "Value": instance_name or f"maidenrun-{deployment_id}"},
-                ],
-            }
-        ],
+    security_group_id = create_security_group(
+        session,
+        name=f"{SECURITY_GROUP_NAME}-{deployment_id}",
+        description=f"MaidenRun: app instance {deployment_id}, port {settings.app_port}",
+        ports=[settings.app_port],
+        cidrs=list(ingress),
+        deployment_id=deployment_id,
     )
+    ec2 = session.client("ec2")
+    try:
+        response = ec2.run_instances(
+            ImageId=ami_id,
+            InstanceType=instance_type,
+            MinCount=1,
+            MaxCount=1,
+            SecurityGroupIds=[security_group_id],
+            IamInstanceProfile={"Name": INSTANCE_ROLE_NAME},
+            UserData=user_data,
+            BlockDeviceMappings=[
+                {"DeviceName": root_device_name, "Ebs": {"VolumeSize": ebs_size_gb, "VolumeType": "gp3"}}
+            ],
+            TagSpecifications=[
+                {
+                    "ResourceType": "instance",
+                    "Tags": [
+                        {"Key": "deployment_id", "Value": deployment_id},
+                        # Never leave an instance nameless in the console — falls back to
+                        # something identifiable if the user didn't type one.
+                        {"Key": "Name", "Value": instance_name or f"maidenrun-{deployment_id}"},
+                    ],
+                }
+            ],
+        )
+    except Exception:
+        ec2.delete_security_group(GroupId=security_group_id)  # no instance, so nothing else would clean it up
+        raise
     instance_id = response["Instances"][0]["InstanceId"]
     logger.info("launched app instance %s for deployment %s", instance_id, deployment_id)
 
     public_ip = wait_for_public_ip(ec2, instance_id)
-    return {"instance_id": instance_id, "public_ip": public_ip}
+    return {"instance_id": instance_id, "public_ip": public_ip, "security_group_id": security_group_id}
 
 
 def terminate_instance(session: boto3.Session, instance_id: str) -> None:

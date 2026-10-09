@@ -22,19 +22,21 @@ def aws_session():
     )
 
 
-@mock_aws
-def test_ensure_app_security_group_opens_only_8001(aws_session):
-    group_id = ec2.ensure_app_security_group(aws_session)
-
-    group = aws_session.client("ec2").describe_security_groups(GroupIds=[group_id])["SecurityGroups"][0]
-    assert len(group["IpPermissions"]) == 1
-    perm = group["IpPermissions"][0]
-    assert perm["FromPort"] == perm["ToPort"] == 8001
-    assert perm["IpRanges"] == [{"CidrIp": "0.0.0.0/0"}]
+def _ingress(client, group_id: str) -> set[tuple[int, str]]:
+    group = client.describe_security_groups(GroupIds=[group_id])["SecurityGroups"][0]
+    return {(p["FromPort"], r["CidrIp"]) for p in group["IpPermissions"] for r in p["IpRanges"]}
 
 
 @mock_aws
-def test_ensure_app_security_group_raises_clear_error_without_default_vpc(aws_session, monkeypatch):
+def test_create_security_group_admits_exactly_the_given_cidrs(aws_session):
+    group_id = ec2.create_security_group(
+        aws_session, "maidenrun-app-x", "test", [8001], ["203.0.113.7/32", "198.51.100.0/24"], "x"
+    )
+    assert _ingress(aws_session.client("ec2"), group_id) == {(8001, "203.0.113.7/32"), (8001, "198.51.100.0/24")}
+
+
+@mock_aws
+def test_create_security_group_raises_clear_error_without_default_vpc(aws_session, monkeypatch):
     # moto's default VPC has real subnets attached and refuses a plain delete
     # (matching AWS), so the "no default VPC" case is simulated at the call
     # level instead: describe_vpcs is stubbed to report none, everything else
@@ -45,14 +47,61 @@ def test_ensure_app_security_group_raises_clear_error_without_default_vpc(aws_se
     monkeypatch.setattr(aws_session, "client", lambda *args, **kwargs: stub_client)
 
     with pytest.raises(ec2.Ec2LaunchError, match="No default VPC"):
-        ec2.ensure_app_security_group(aws_session)
+        ec2.create_security_group(aws_session, "maidenrun-app-x", "test", [8001], [ec2.OPEN_CIDR], "x")
 
 
 @mock_aws
-def test_ensure_app_security_group_is_idempotent(aws_session):
-    first = ec2.ensure_app_security_group(aws_session)
-    second = ec2.ensure_app_security_group(aws_session)
-    assert first == second
+def test_set_security_group_cidrs_adds_and_revokes_to_match(aws_session):
+    group_id = ec2.create_security_group(aws_session, "maidenrun-feedback-x", "test", [8002, 8003], [ec2.OPEN_CIDR], "x")
+
+    ec2.set_security_group_cidrs(aws_session, group_id, [8002, 8003], ["203.0.113.7/32"])
+    assert _ingress(aws_session.client("ec2"), group_id) == {(8002, "203.0.113.7/32"), (8003, "203.0.113.7/32")}
+
+    ec2.set_security_group_cidrs(aws_session, group_id, [8002, 8003], [ec2.OPEN_CIDR])
+    assert _ingress(aws_session.client("ec2"), group_id) == {(8002, ec2.OPEN_CIDR), (8003, ec2.OPEN_CIDR)}
+
+
+@mock_aws
+def test_delete_security_group_after_termination(aws_session):
+    create_instance_profile(aws_session)
+    result = ec2.launch_app_instance(
+        aws_session, deployment_id=DEPLOYMENT_ID, repo_url=REPO_URL, entry_point="compose",
+        instance_type="t3.small", ebs_size_gb=20, secrets={},
+    )
+    ec2.terminate_instance(aws_session, result["instance_id"])
+    ec2.delete_security_group_after_termination(aws_session, result["security_group_id"], result["instance_id"])
+
+    groups = aws_session.client("ec2").describe_security_groups()["SecurityGroups"]
+    assert result["security_group_id"] not in {g["GroupId"] for g in groups}
+
+
+def test_normalize_allowed_ips_turns_addresses_into_cidrs_and_dedupes():
+    assert ec2.normalize_allowed_ips([" 203.0.113.7 ", "198.51.100.9/24", "203.0.113.7/32"]) == [
+        "203.0.113.7/32",
+        "198.51.100.0/24",
+    ]
+
+
+@pytest.mark.parametrize("bad", ["not-an-ip", "300.1.1.1", "2001:db8::1", "10.0.0.1/33"])
+def test_normalize_allowed_ips_rejects_invalid_and_ipv6(bad):
+    with pytest.raises(ValueError):
+        ec2.normalize_allowed_ips([bad])
+
+
+def test_normalize_allowed_ips_caps_the_count():
+    with pytest.raises(ValueError, match="At most"):
+        ec2.normalize_allowed_ips([f"10.0.0.{i}" for i in range(ec2.MAX_ALLOWED_IPS + 1)])
+
+
+def test_ingress_cidrs_is_open_for_an_empty_list_without_looking_up_the_ip(monkeypatch):
+    monkeypatch.setattr(ec2, "my_public_ip", lambda: pytest.fail("should not look up the IP"))
+    assert ec2.ingress_cidrs([]) == [ec2.OPEN_CIDR]
+
+
+def test_ingress_cidrs_always_includes_this_machines_ip(monkeypatch):
+    monkeypatch.setattr(ec2, "my_public_ip", lambda: "192.0.2.50")
+    assert ec2.ingress_cidrs(["203.0.113.7/32"]) == ["203.0.113.7/32", "192.0.2.50/32"]
+    assert ec2.ingress_cidrs(["192.0.2.50/32"]) == ["192.0.2.50/32"]
 
 
 @mock_aws
@@ -261,7 +310,7 @@ def test_launch_app_instance_bakes_the_sessions_own_region_into_user_data():
 
 
 @mock_aws
-def test_launch_app_instance_security_group_has_only_8001(aws_session):
+def test_launch_app_instance_gets_its_own_security_group_with_only_8001(aws_session):
     create_instance_profile(aws_session)
     result = ec2.launch_app_instance(
         aws_session,
@@ -271,14 +320,34 @@ def test_launch_app_instance_security_group_has_only_8001(aws_session):
         instance_type="t3.small",
         ebs_size_gb=20,
         secrets=SECRETS,
+        ingress=["203.0.113.7/32"],
     )
 
     client = aws_session.client("ec2")
     instance = client.describe_instances(InstanceIds=[result["instance_id"]])["Reservations"][0]["Instances"][0]
-    sg_ids = [sg["GroupId"] for sg in instance["SecurityGroups"]]
-    group = client.describe_security_groups(GroupIds=sg_ids)["SecurityGroups"][0]
-    assert len(group["IpPermissions"]) == 1
-    assert group["IpPermissions"][0]["FromPort"] == 8001
+    assert [sg["GroupId"] for sg in instance["SecurityGroups"]] == [result["security_group_id"]]
+    group = client.describe_security_groups(GroupIds=[result["security_group_id"]])["SecurityGroups"][0]
+    assert group["GroupName"] == f"maidenrun-app-{DEPLOYMENT_ID}"
+    assert _ingress(client, result["security_group_id"]) == {(8001, "203.0.113.7/32")}
+
+
+@mock_aws
+def test_launch_app_instance_deletes_its_security_group_if_the_launch_fails(aws_session, monkeypatch):
+    real_client = aws_session.client("ec2")
+    stub_client = MagicMock(wraps=real_client)
+    stub_client.run_instances.side_effect = RuntimeError("launch rejected")
+    real_session_client = aws_session.client
+    monkeypatch.setattr(
+        aws_session, "client", lambda name, *a, **kw: stub_client if name == "ec2" else real_session_client(name, *a, **kw)
+    )
+
+    with pytest.raises(RuntimeError, match="launch rejected"):
+        ec2.launch_app_instance(
+            aws_session, deployment_id=DEPLOYMENT_ID, repo_url=REPO_URL, entry_point="compose",
+            instance_type="t3.small", ebs_size_gb=20, secrets={},
+        )
+    names = {g["GroupName"] for g in real_client.describe_security_groups()["SecurityGroups"]}
+    assert f"maidenrun-app-{DEPLOYMENT_ID}" not in names
 
 
 @mock_aws

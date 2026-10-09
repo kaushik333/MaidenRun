@@ -1,6 +1,10 @@
 .env
-logs/
-data/
+# root logs/ and data/ ship as empty dirs (.gitkeep) so Docker never
+# creates them root-owned; any other logs/ or data/ stays fully ignored
+**/logs/*
+**/data/*
+!/logs/.gitkeep
+!/data/.gitkeep
 **/__pycache__/
 *.pyc
 **/.pytest_cache/

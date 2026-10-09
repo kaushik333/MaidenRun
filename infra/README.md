@@ -61,8 +61,9 @@ the AWS account you want to deploy into.
    the first time you deploy.
 
 5. **That's it for reauthentication.** The control plane caches the key
-   locally on your own machine (`~/.agentdock/credentials.json`,
-   readable only by you) the first time it's provided, and reuses it
+   locally on your own machine (`~/.agentdock/credentials.json`, or
+   `data/credentials.json` under docker compose — readable only by you)
+   the first time it's provided, and reuses it
    directly for every AWS call after that — deploy, terminate, whatever
    comes later. Nothing is re-sent to any server, and nothing leaves your
    machine.

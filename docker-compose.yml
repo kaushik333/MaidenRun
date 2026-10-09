@@ -3,10 +3,18 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+    # Runs as your host user so everything written to the ./logs and ./data
+    # bind mounts stays owned by you, not root. Set UID/GID in .env if yours
+    # aren't 1000 (check with `id -u` / `id -g`).
+    user: "${UID:-1000}:${GID:-1000}"
     ports:
       - "8000:8000"
     env_file:
-      - .env
+      - path: .env
+        required: false
+    environment:
+      # Kept in the bind-mounted ./data so the cached AWS key survives rebuilds.
+      - AWS_CREDENTIALS_PATH=/app/data/credentials.json
     volumes:
       - ./backend/app:/app/app
       - ./infra:/app/infra:ro

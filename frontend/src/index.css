@@ -1015,7 +1015,7 @@ body {
   gap: 0.2rem;
 }
 
-.reuse-creds-row {
+.aws-identity {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1162,6 +1162,22 @@ body {
   font-size: 0.8rem;
   font-weight: 600;
   color: var(--color-danger);
+}
+
+/* ---- AWS identity line (both deploy forms) ---- */
+.aws-identity-arn {
+  /* own line under the status + link row */
+  order: 3;
+  flex-basis: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+
+.aws-identity-missing {
+  margin: 0;
 }
 
 /* ---- IP allowlist (deploy forms + Deployments tab editor) ---- */

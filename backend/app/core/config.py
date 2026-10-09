@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     # aws
     aws_default_region: str = "us-east-1"
     aws_credentials_path: str = str(Path.home() / ".maidenrun" / "credentials.json")
+    # Named AWS CLI profile to use (incl. SSO) — empty means the default
+    # credential chain. Takes priority over a cached pasted key.
+    aws_profile: str = ""
 
     # HMAC request signing (see app/core/auth.py) — empty disables auth
     # entirely, which is the default for local/dev. Set to a random value

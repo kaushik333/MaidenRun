@@ -57,13 +57,23 @@ the AWS account you want to deploy into.
      over than anything else it asks for.
 
 4. **Create an access key** for the user (Security credentials → Create
-   access key) and paste it into the landing page's AWS credentials field
-   the first time you deploy.
+   access key).
 
-5. **That's it for reauthentication.** The control plane caches the key
-   locally on your own machine (`~/.maidenrun/credentials.json`, or
-   `data/credentials.json` under docker compose — readable only by you)
-   the first time it's provided, and reuses it
-   directly for every AWS call after that — deploy, terminate, whatever
-   comes later. Nothing is re-sent to any server, and nothing leaves your
-   machine.
+5. **Give MaidenRun the key** — either way, it never leaves your machine.
+   - **Recommended: an AWS CLI profile**, the same way every other AWS tool
+     reads credentials:
+     ```bash
+     aws configure --profile maidenrun   # paste the access key from step 4
+     ```
+     Then in `.env` set `AWS_PROFILE=maidenrun`, and — when running under
+     docker compose — `AWS_CONFIG_DIR=~/.aws` so the backend container can
+     see it. AWS SSO profiles work too: give the SSO permission set the
+     policy from step 2 instead of creating an IAM user, and run
+     `aws sso login --profile maidenrun` when the session expires.
+   - **Or paste the key into the deploy form.** It's cached locally
+     (`~/.maidenrun/credentials.json`, or `data/credentials.json` under
+     docker compose — readable only by you) and reused for every later AWS
+     call.
+
+   If both exist, the profile wins. The form shows which identity it's
+   using above the region selector.

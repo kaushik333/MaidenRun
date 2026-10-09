@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { BACKEND_URL } from "./config";
 import { apiFetch } from "./apiClient";
 import AllowedIpsField, { parseAllowedIps } from "./AllowedIpsField.jsx";
+import AwsIdentity from "./AwsIdentity.jsx";
 import CostMonitor from "./CostMonitor.jsx";
 import DeploySteps from "./DeploySteps.jsx";
 import PasswordField from "./PasswordField.jsx";
@@ -50,7 +51,7 @@ export default function DeployFeedbackStack({ onDeploySuccess, lastAwsRegion, on
   const [steps, setSteps] = useState(freshSteps());
   const [hasStarted, setHasStarted] = useState(false);
   const [deployCount, setDeployCount] = useState(0);
-  const [reuseCredentials, setReuseCredentials] = useState(Boolean(lastAwsRegion));
+  const [showAwsKeys, setShowAwsKeys] = useState(false);
   const pollGenerationRef = useRef(0);
 
   // A deploy elsewhere in the app becomes known after this component has
@@ -59,7 +60,6 @@ export default function DeployFeedbackStack({ onDeploySuccess, lastAwsRegion, on
   useEffect(() => {
     if (lastAwsRegion) {
       setForm((f) => ({ ...f, region: lastAwsRegion }));
-      setReuseCredentials(true);
     }
   }, [lastAwsRegion]);
 
@@ -137,8 +137,8 @@ export default function DeployFeedbackStack({ onDeploySuccess, lastAwsRegion, on
 
     const payload = {
       aws: {
-        access_key_id: form.access_key_id.trim() || null,
-        secret_access_key: form.secret_access_key.trim() || null,
+        access_key_id: (showAwsKeys && form.access_key_id.trim()) || null,
+        secret_access_key: (showAwsKeys && form.secret_access_key.trim()) || null,
         region: form.region,
       },
       instance_name: form.instance_name.trim() || null,
@@ -212,56 +212,48 @@ export default function DeployFeedbackStack({ onDeploySuccess, lastAwsRegion, on
           <section className="form-section">
             <div className="section-heading">
               <h2 className="section-title">AWS credentials</h2>
-              {!reuseCredentials && (
-                <span className="section-hint">Leave blank to reuse credentials already cached from a prior deploy.</span>
-              )}
+              <span className="section-hint">A pasted key is cached locally on your machine — never sent anywhere else.</span>
             </div>
-            {reuseCredentials ? (
-              <div className="reuse-creds-row">
-                <span className="field-status field-status--ok">
-                  ✓ Using AWS credentials from your last deploy ({form.region})
-                </span>
-                <button type="button" className="link-btn" onClick={() => setReuseCredentials(false)}>
-                  Change
-                </button>
+            <AwsIdentity showKeys={showAwsKeys} onShowKeysChange={setShowAwsKeys} />
+            <div className="field-row">
+              {showAwsKeys && (
+                <>
+                  <div className="field">
+                    <label htmlFor="feedback_access_key_id">Access key ID</label>
+                    <input
+                      id="feedback_access_key_id"
+                      type="text"
+                      className="input"
+                      value={form.access_key_id}
+                      onChange={(e) => updateField("access_key_id", e.target.value)}
+                    />
+                  </div>
+                  <div className="field">
+                    <label htmlFor="feedback_secret_access_key">Secret access key</label>
+                    <PasswordField
+                      id="feedback_secret_access_key"
+                      value={form.secret_access_key}
+                      onChange={(e) => updateField("secret_access_key", e.target.value)}
+                    />
+                  </div>
+                </>
+              )}
+              <div className="field">
+                <label htmlFor="feedback_region">Region</label>
+                <select
+                  id="feedback_region"
+                  className="input"
+                  value={form.region}
+                  onChange={(e) => updateField("region", e.target.value)}
+                >
+                  {AWS_REGIONS.map((r) => (
+                    <option key={r} value={r}>
+                      {r}
+                    </option>
+                  ))}
+                </select>
               </div>
-            ) : (
-              <div className="field-row">
-                <div className="field">
-                  <label htmlFor="feedback_access_key_id">Access key ID</label>
-                  <input
-                    id="feedback_access_key_id"
-                    type="text"
-                    className="input"
-                    value={form.access_key_id}
-                    onChange={(e) => updateField("access_key_id", e.target.value)}
-                  />
-                </div>
-                <div className="field">
-                  <label htmlFor="feedback_secret_access_key">Secret access key</label>
-                  <PasswordField
-                    id="feedback_secret_access_key"
-                    value={form.secret_access_key}
-                    onChange={(e) => updateField("secret_access_key", e.target.value)}
-                  />
-                </div>
-                <div className="field">
-                  <label htmlFor="feedback_region">Region</label>
-                  <select
-                    id="feedback_region"
-                    className="input"
-                    value={form.region}
-                    onChange={(e) => updateField("region", e.target.value)}
-                  >
-                    {AWS_REGIONS.map((r) => (
-                      <option key={r} value={r}>
-                        {r}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            )}
+            </div>
           </section>
 
           <section className="form-section">

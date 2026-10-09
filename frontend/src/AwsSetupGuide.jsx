@@ -47,8 +47,11 @@ const STATIC_STEPS = [
     body: "On that same user: Security credentials → Create access key. Copy both values now — AWS only shows the secret once.",
   },
   {
-    title: "Paste the key into the form",
-    body: "That's it for reauthentication — it's cached locally on your machine after that, never asked for again.",
+    title: "Give MaidenRun the key",
+    body:
+      "Recommended: save it as an AWS CLI profile (aws configure --profile maidenrun), then set " +
+      "AWS_PROFILE=maidenrun — plus AWS_CONFIG_DIR=~/.aws under docker compose — in .env. " +
+      "Or paste it into the form; it's cached locally on your machine and never asked for again.",
   },
 ];
 

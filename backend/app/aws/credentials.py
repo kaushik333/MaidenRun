@@ -1,11 +1,18 @@
 import json
+import os
 import stat
 from pathlib import Path
 
 import boto3
+from botocore.exceptions import ProfileNotFound, SSOTokenLoadError, TokenRetrievalError, UnauthorizedSSOTokenError
 
 from app.core.config import settings
 from app.core.logging import logger
+
+# The control plane runs on the user's own machine, never on EC2, so skip the
+# credential chain's EC2-metadata lookup — otherwise every call without a
+# profile would first wait out a ~1s network timeout.
+os.environ.setdefault("AWS_EC2_METADATA_DISABLED", "true")
 
 
 class NoCredentialsError(Exception):
@@ -39,28 +46,56 @@ def get_session(
     secret_access_key: str | None = None,
     region: str | None = None,
 ) -> boto3.Session:
-    """Returns a session scoped to whatever IAM policy is attached to the key.
+    """Returns a session for the first credentials found, in this order:
 
-    Pass access_key_id/secret_access_key the first time (e.g. from the
-    deploy form) to cache them locally; every later call can omit both and
-    reuse what's cached instead, so actions after the first deploy never
-    need to re-prompt for credentials. `region` is per-call, not cached —
-    it's the region to deploy *into* this time (the user's own choice on
-    the form), not a property of the credentials themselves.
+    1. A key pasted in this request — an explicit choice, so it always wins
+       (and is cached locally for later calls, as before).
+    2. The standard AWS credential chain — AWS_PROFILE / the default profile
+       in ~/.aws (incl. SSO) or AWS_* env vars — same as the AWS CLI, Terraform
+       and every other AWS tool.
+    3. A key pasted on an earlier deploy and cached locally.
+
+    `region` is per-call, not part of the credentials — it's the region the
+    user chose to deploy into this time.
     """
+    region = region or settings.aws_default_region
     if access_key_id and secret_access_key:
         save_credentials(access_key_id, secret_access_key)
-    else:
-        cached = load_credentials()
-        if cached is None:
-            raise NoCredentialsError(
-                "No AWS credentials cached yet and none were provided. "
-                "Paste an access key at least once (see infra/README.md)."
-            )
-        access_key_id, secret_access_key = cached
+        return boto3.Session(
+            aws_access_key_id=access_key_id, aws_secret_access_key=secret_access_key, region_name=region
+        )
 
-    return boto3.Session(
-        aws_access_key_id=access_key_id,
-        aws_secret_access_key=secret_access_key,
-        region_name=region or settings.aws_default_region,
-    )
+    profile = settings.aws_profile or None
+    try:
+        chain = boto3.Session(profile_name=profile, region_name=region)
+        if chain.get_credentials() is not None:
+            return chain
+    except ProfileNotFound as exc:
+        raise NoCredentialsError(
+            f"AWS profile {profile!r} (AWS_PROFILE) wasn't found — check ~/.aws/config, or AWS_CONFIG_DIR in .env "
+            "when running under docker compose."
+        ) from exc
+    except (SSOTokenLoadError, UnauthorizedSSOTokenError, TokenRetrievalError) as exc:
+        raise NoCredentialsError(
+            f"Your AWS SSO session has expired — run `aws sso login --profile {profile or 'default'}` and retry."
+        ) from exc
+
+    cached = load_credentials()
+    if cached is None:
+        raise NoCredentialsError(
+            "No AWS credentials cached yet and none were provided. Set up an AWS profile (AWS_PROFILE) "
+            "or paste an access key (see infra/README.md)."
+        )
+    return boto3.Session(aws_access_key_id=cached[0], aws_secret_access_key=cached[1], region_name=region)
+
+
+def credential_source(session: boto3.Session) -> str:
+    """Human-readable description of where a session's credentials came from."""
+    method = session.get_credentials().method
+    if method == "explicit":
+        return "saved access key"
+    if method == "env":
+        return "AWS environment variables"
+    if method == "sso":
+        return f"AWS SSO profile '{session.profile_name}'"
+    return f"AWS profile '{session.profile_name}'"

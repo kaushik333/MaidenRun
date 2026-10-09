@@ -46,8 +46,10 @@ router = APIRouter()
 
 
 class AwsCredentials(BaseModel):
-    access_key_id: str = Field(min_length=1)
-    secret_access_key: str = Field(min_length=1)
+    # Optional: omitted when the backend has an AWS profile or a cached key
+    # (see get_session for the order credentials are looked up in).
+    access_key_id: str | None = None
+    secret_access_key: str | None = None
     region: Literal[
         "us-east-1", "us-east-2", "us-west-2", "eu-west-1", "eu-central-1",
         "ap-southeast-1", "ap-southeast-2", "ap-northeast-1", "me-central-1",

@@ -15,11 +15,21 @@ services:
     environment:
       # Kept in the bind-mounted ./data so the cached AWS key survives rebuilds.
       - AWS_CREDENTIALS_PATH=/app/data/credentials.json
+      # So the AWS SDK finds the mounted ~/.aws below (config, credentials, SSO cache).
+      - HOME=/home/maidenrun
+      # Passed through explicitly — compose only uses shell vars for ${...}
+      # interpolation, never injects them into the container by itself.
+      - AWS_PROFILE=${AWS_PROFILE:-}
     volumes:
       - ./backend/app:/app/app
       - ./infra:/app/infra:ro
       - ./logs:/app/logs
       - ./data:/app/data
+      # Opt-in: set AWS_CONFIG_DIR=~/.aws in .env to use your AWS CLI profiles
+      # (incl. SSO). Unset, this mounts an empty placeholder so Docker never
+      # creates a root-owned ~/.aws for users without the AWS CLI. Writable
+      # because SSO refreshes its token cache in there.
+      - ${AWS_CONFIG_DIR:-./infra/no-aws-config}:/home/maidenrun/.aws
 
   frontend:
     build: ./frontend

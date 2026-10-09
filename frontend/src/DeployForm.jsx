@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { BACKEND_URL } from "./config";
 import { apiFetch } from "./apiClient";
 import AllowedIpsField, { parseAllowedIps } from "./AllowedIpsField.jsx";
+import AwsIdentity from "./AwsIdentity.jsx";
 import AwsSetupGuide from "./AwsSetupGuide.jsx";
 import CostMonitor from "./CostMonitor.jsx";
 import DeploySteps from "./DeploySteps.jsx";
@@ -67,6 +68,7 @@ export default function DeployForm({
   terminatedIds,
 }) {
   const [form, setForm] = useState(initialState);
+  const [showAwsKeys, setShowAwsKeys] = useState(false);
   const [result, setResult] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [steps, setSteps] = useState(freshSteps());
@@ -231,6 +233,13 @@ export default function DeployForm({
     const { app_instance_name, ...formForBackend } = form;
     const payload = {
       ...formForBackend,
+      // Keys are sent only when the user chose to paste them; otherwise the
+      // backend uses its AWS profile or saved key.
+      aws: {
+        ...form.aws,
+        access_key_id: (showAwsKeys && form.aws.access_key_id.trim()) || null,
+        secret_access_key: (showAwsKeys && form.aws.secret_access_key.trim()) || null,
+      },
       instance_name: app_instance_name.trim() || null,
       github_token: form.github_token.trim() || null,
       env_vars: form.env_vars.filter((v) => v.key.trim() !== "").map((v) => ({ ...v, key: v.key.trim() })),
@@ -349,31 +358,34 @@ export default function DeployForm({
               <h2 className="section-title">AWS credentials</h2>
               <AwsSetupGuide />
             </div>
-            <span className="section-hint">
-              Cached locally on your machine after the first deploy — never sent anywhere else.
-            </span>
+            <span className="section-hint">A pasted key is cached locally on your machine — never sent anywhere else.</span>
           </div>
+          <AwsIdentity showKeys={showAwsKeys} onShowKeysChange={setShowAwsKeys} />
           <div className="field-row">
-            <div className="field">
-              <label htmlFor="access_key_id">Access key ID</label>
-              <input
-                id="access_key_id"
-                type="text"
-                className="input"
-                required
-                value={form.aws.access_key_id}
-                onChange={(e) => updateAws("access_key_id", e.target.value)}
-              />
-            </div>
-            <div className="field">
-              <label htmlFor="secret_access_key">Secret access key</label>
-              <PasswordField
-                id="secret_access_key"
-                required
-                value={form.aws.secret_access_key}
-                onChange={(e) => updateAws("secret_access_key", e.target.value)}
-              />
-            </div>
+            {showAwsKeys && (
+              <>
+                <div className="field">
+                  <label htmlFor="access_key_id">Access key ID</label>
+                  <input
+                    id="access_key_id"
+                    type="text"
+                    className="input"
+                    required
+                    value={form.aws.access_key_id}
+                    onChange={(e) => updateAws("access_key_id", e.target.value)}
+                  />
+                </div>
+                <div className="field">
+                  <label htmlFor="secret_access_key">Secret access key</label>
+                  <PasswordField
+                    id="secret_access_key"
+                    required
+                    value={form.aws.secret_access_key}
+                    onChange={(e) => updateAws("secret_access_key", e.target.value)}
+                  />
+                </div>
+              </>
+            )}
             <div className="field">
               <label htmlFor="region">Region</label>
               <select

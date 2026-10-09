@@ -490,3 +490,16 @@ def test_terminate_rejects_missing_instance_id() -> None:
 def test_terminate_rejects_invalid_region() -> None:
     response = client.post("/terminate", json={"instance_id": "i-0123456789abcdef0", "region": "mars-1"})
     assert response.status_code == 422
+
+
+@mock_aws
+@patch("app.api.deploy.wait_for_port_health", side_effect=_no_op_health)
+@patch("app.api.deploy.validate_repo", return_value=VALID_COMPOSE_REPO)
+def test_deploy_without_pasted_keys_uses_the_backends_aws_credentials(_mock_validate, _mock_health) -> None:
+    # moto puts fake AWS_* env vars in place — i.e. the credential chain has
+    # credentials, exactly as an AWS profile would provide them.
+    _bootstrap_moto_account()
+    payload = {**EXTERNAL_LLM_PAYLOAD, "aws": {"region": settings.aws_default_region}}
+    _response, status = _deploy_and_wait(payload)
+    assert status["error"] is None
+    assert status["result"]["app_instance_id"].startswith("i-")

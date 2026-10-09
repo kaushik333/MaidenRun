@@ -439,3 +439,12 @@ def test_wait_for_port_health_raises_clear_error_on_timeout(monkeypatch):
 def test_wait_for_port_health_works_for_other_ports(monkeypatch):
     monkeypatch.setattr(ec2.urllib.request, "urlopen", lambda url, timeout: object())
     ec2.wait_for_port_health("1.2.3.4", 8002, timeout_seconds=5)  # no exception raised for a non-8001 port either
+
+
+def test_docker_tooling_is_pinned_not_latest():
+    user_data = ec2.render_user_data(
+        repo_url=REPO_URL, entry_point="compose", secret_names=[], deployment_id=DEPLOYMENT_ID, region="us-east-1"
+    )
+    assert "latest" not in user_data
+    assert f"/download/{ec2.COMPOSE_VERSION}/docker-compose-linux-x86_64" in user_data
+    assert f"/download/{ec2.BUILDX_VERSION}/buildx-{ec2.BUILDX_VERSION}.linux-amd64" in user_data

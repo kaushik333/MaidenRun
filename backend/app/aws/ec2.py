@@ -22,36 +22,28 @@ PARAMETER_NAMESPACE = "/maidenrun"
 # its real env vars.
 REPO_TOKEN_PARAM_NAME = "__repo_token"
 
+# Pinned so every instance boots the same, tested Docker tooling — never
+# whatever happened to be released that morning. Bump deliberately.
+COMPOSE_VERSION = "v5.6.0"
+BUILDX_VERSION = "v0.38.0"
+
 DOCKER_INSTALL = (
     "dnf install -y docker git\n"
     "systemctl enable --now docker\n"
     "mkdir -p /usr/libexec/docker/cli-plugins\n"
-    # Diagnostic breadcrumbs, cheap to leave in permanently — cost nothing
-    # and already earned their keep once, ruling out disk space/permissions/
-    # SELinux as candidates for a `curl: (23)` failure that turned out to be
-    # the pipe-to-grep bug below instead.\n"
+    # Diagnostic breadcrumbs for /var/log/cloud-init-output.log — cheap, and
+    # they rule out disk space/permissions/SELinux when a download fails.
     'echo "DIAG df: $(df -h / | tail -1)"\n'
     'echo "DIAG selinux: $(getenforce 2>&1 || echo not-installed)"\n'
     'echo "DIAG dir: $(ls -ld /usr/libexec/docker/cli-plugins 2>&1)"\n'
     'echo "DIAG whoami: $(whoami)"\n'
-    "curl -fsSL --retry 3 https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64 "
-    "-o /usr/libexec/docker/cli-plugins/docker-compose\n"
+    f"curl -fsSL --retry 3 https://github.com/docker/compose/releases/download/{COMPOSE_VERSION}/"
+    "docker-compose-linux-x86_64 -o /usr/libexec/docker/cli-plugins/docker-compose\n"
     "chmod +x /usr/libexec/docker/cli-plugins/docker-compose\n"
-    # Amazon Linux 2023's `docker` package doesn't pull in a buildx plugin as
-    # a dependency, and `docker compose` refuses to build any service with a
-    # `build:` block without one (fails with "compose build requires buildx
-    # 0.17.0 or later") — buildx's release assets are version-qualified
-    # filenames (no stable "latest" alias like compose has), so the tag has
-    # to be resolved via the GitHub API first. Captured into a variable
-    # *before* parsing it, rather than piped straight into `grep -m1` — `-m1`
-    # exits the instant it finds a match, and curl (still mid-transfer on a
-    # multi-KB response) gets a broken pipe from that early exit, which
-    # surfaces as an opaque `curl: (23) Failure writing output to
-    # destination` with no indication it was ever about a pipe.\n"
-    'BUILDX_RELEASE_JSON="$(curl -fsSL --retry 3 https://api.github.com/repos/docker/buildx/releases/latest)"\n'
-    "BUILDX_VERSION=\"$(sed -E -n 's/.*\"tag_name\": *\"([^\"]+)\".*/\\1/p' <<< \"$BUILDX_RELEASE_JSON\" | head -1)\"\n"
-    'curl -fsSL --retry 3 "https://github.com/docker/buildx/releases/download/${BUILDX_VERSION}/'
-    'buildx-${BUILDX_VERSION}.linux-amd64" -o /usr/libexec/docker/cli-plugins/docker-buildx\n'
+    # Amazon Linux 2023's `docker` package has no buildx plugin, and `docker
+    # compose` refuses to build any service with a `build:` block without one.
+    f"curl -fsSL --retry 3 https://github.com/docker/buildx/releases/download/{BUILDX_VERSION}/"
+    f"buildx-{BUILDX_VERSION}.linux-amd64 -o /usr/libexec/docker/cli-plugins/docker-buildx\n"
     "chmod +x /usr/libexec/docker/cli-plugins/docker-buildx"
 )
 

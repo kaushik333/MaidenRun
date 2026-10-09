@@ -136,3 +136,39 @@ def test_validate_repo_endpoint_passes_github_token_through() -> None:
         )
     mock_validate.assert_called_once_with("https://github.com/x/y", "ghp_secrettoken")
 
+
+def _clone_error(stderr: str, github_token: str | None = None) -> str:
+    with patch("app.validation.validator.subprocess.run") as mock_run:
+        mock_run.return_value.returncode = 128
+        mock_run.return_value.stderr = stderr
+        return clone_repo("https://github.com/x/y", Path("/tmp/wherever"), github_token=github_token)
+
+
+def test_clone_error_explains_a_token_without_repo_access() -> None:
+    # Verbatim GitHub response for a fine-grained token missing this repo.
+    error = _clone_error(
+        "remote: Write access to repository not granted.\n"
+        "fatal: unable to access 'https://github.com/x/y/': The requested URL returned error: 403",
+        github_token="github_pat_abc",
+    )
+    assert "your GitHub token can't access this repository" in error
+    assert "Contents: Read-only" in error
+    assert "not granted" in error  # git's own text is still included for debugging
+
+
+def test_clone_error_explains_a_rejected_token() -> None:
+    error = _clone_error(
+        "fatal: could not read Password for 'https://ghp_bad@github.com': terminal prompts disabled",
+        github_token="ghp_bad",
+    )
+    assert "GitHub rejected the token" in error
+    assert "ghp_bad" not in error
+
+
+def test_clone_error_explains_a_private_or_missing_repo_without_token() -> None:
+    error = _clone_error("fatal: could not read Username for 'https://github.com': terminal prompts disabled")
+    assert "doesn't exist or is private" in error
+
+
+def test_clone_error_passes_unrecognized_failures_through_unchanged() -> None:
+    assert _clone_error("fatal: something else") == "Could not clone https://github.com/x/y: fatal: something else"

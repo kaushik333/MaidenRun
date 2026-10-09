@@ -42,13 +42,29 @@ def clone_repo(repo_url: str, dest: Path, github_token: str | None = None) -> st
         return f"Could not run git to clone {repo_url}: {exc}"
 
     if result.returncode != 0:
-        stderr = result.stderr.strip()
+        # Drop git's "Cloning into '/tmp/...'" progress line — noise to the user.
+        stderr = "\n".join(line for line in result.stderr.strip().splitlines() if not line.startswith("Cloning into"))
         if github_token:
             # git itself sometimes echoes the URL it was given back in its
             # own error text (e.g. "repository 'https://TOKEN@...' not
             # found") — scrub it out even though we never embed it ourselves.
             stderr = stderr.replace(github_token, "***")
-        return f"Could not clone {repo_url}: {stderr}"
+
+        # git's own wording is misleading for the common auth failures (e.g.
+        # GitHub says "Write access ... not granted" when a token can't even
+        # read the repo), so lead with what to actually do about it.
+        if github_token and any(s in stderr for s in ("not granted", "403", "Repository not found")):
+            hint = (
+                "your GitHub token can't access this repository. For a fine-grained token, add the repo "
+                "under Repository access with Contents: Read-only; for a classic token, enable the repo scope."
+            )
+        elif github_token and any(s in stderr for s in ("could not read Password", "Authentication failed")):
+            hint = "GitHub rejected the token — it may be expired, revoked, or mistyped."
+        elif not github_token and "could not read Username" in stderr:
+            hint = "the repository doesn't exist or is private. Check the URL; for a private repo, add a personal access token."
+        else:
+            return f"Could not clone {repo_url}: {stderr}"
+        return f"Could not clone {repo_url}: {hint} (git: {stderr})"
     return None
 
 

@@ -1,7 +1,7 @@
 [project]
 name = "maidenrun-backend"
 version = "0.1.0"
-description = "Control plane backend for Maidenrun"
+description = "Control plane backend for MaidenRun"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",

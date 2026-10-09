@@ -125,7 +125,7 @@ export default function App() {
               <circle cx="66" cy="50" r="17" fill="var(--art-coral)" />
             </svg>
           </div>
-          <h1>Maidenrun</h1>
+          <h1>MaidenRun</h1>
           <p className="subtitle">
             Point us at your agent's repo and we'll deploy it to your own AWS account,
             with a shareable link and a feedback dashboard included.

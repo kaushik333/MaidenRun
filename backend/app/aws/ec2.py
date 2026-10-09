@@ -103,7 +103,7 @@ def ensure_app_security_group(session: boto3.Session) -> str:
 
     group_id = ec2.create_security_group(
         GroupName=SECURITY_GROUP_NAME,
-        Description="Maidenrun: app instance, port 8001 only",
+        Description="MaidenRun: app instance, port 8001 only",
         VpcId=get_default_vpc_id(ec2),
     )["GroupId"]
     ec2.authorize_security_group_ingress(

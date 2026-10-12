@@ -179,6 +179,8 @@ export default function App() {
         </div>
         <div hidden={activeTab !== "feedback"}>
           <DeployFeedbackStack
+            refreshKey={historyVersion}
+            isActive={activeTab === "feedback"}
             onDeploySuccess={handleFeedbackDeploySuccess}
             lastAwsRegion={lastDeploy?.region ?? null}
             onTerminated={handleTerminated}
@@ -186,7 +188,11 @@ export default function App() {
           />
         </div>
         <div hidden={activeTab !== "history"}>
-          <DeploymentHistory refreshKey={historyVersion} onTerminated={handleTerminated} />
+          <DeploymentHistory
+            refreshKey={historyVersion}
+            isActive={activeTab === "history"}
+            onTerminated={handleTerminated}
+          />
         </div>
       </div>
     </main>

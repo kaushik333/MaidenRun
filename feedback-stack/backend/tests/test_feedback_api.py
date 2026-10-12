@@ -20,8 +20,9 @@ def test_get_questions_returns_default_questionnaire():
         response = client.get("/api/questions")
     assert response.status_code == 200
     body = response.json()
-    assert [q["question"] for q in body] == [q.question for q in DEFAULT_QUESTIONS]
-    assert all(q["answer"] == "" for q in body)
+    assert body["version"] == 1
+    assert [q["question"] for q in body["questions"]] == [q.question for q in DEFAULT_QUESTIONS]
+    assert all(q["answer"] == "" for q in body["questions"])
 
 
 def test_submit_feedback_writes_row_to_postgres_with_correct_shape():

@@ -10,12 +10,16 @@ from app.api.feedback import router as feedback_router
 from app.core.config import settings
 from app.core.logging import logger
 from app.db import ensure_schema, get_connection
+from app.questions import load_questions
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # The questionnaire bundled at deploy time only seeds version 1 on first
+    # start; after that, versions live in the database (see app/db.py).
+    initial_questions = [q.model_dump() for q in load_questions(Path(settings.feedback_questions_path))]
     with get_connection() as conn:
-        ensure_schema(conn)
+        ensure_schema(conn, initial_questions)
     logger.info(
         "feedback-stack backend (%s) started for deployment %s", settings.service_role, settings.deployment_id
     )

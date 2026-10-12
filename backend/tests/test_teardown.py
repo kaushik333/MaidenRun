@@ -24,7 +24,7 @@ FEEDBACK_PAYLOAD = {
     "aws": {"access_key_id": "AKIA_TEST", "secret_access_key": "shh"},
     "questionnaire_json": '{"questions": []}',
 }
-CSV_EXPORT = b"submitted_at,Did it help?\n2026-10-09T10:00:00+00:00,Yes\n"
+XLSX_EXPORT = b"PK\x03\x04 fake workbook bytes"
 JSON_EXPORT = b'[{"id": 1, "answers": [{"question": "Did it help?", "answer": "Yes"}]}]'
 
 
@@ -32,9 +32,9 @@ def _session(region: str = settings.aws_default_region) -> boto3.Session:
     return boto3.Session(aws_access_key_id="test", aws_secret_access_key="test", region_name=region)
 
 
-def _fake_dashboard(url, timeout=None):
+def _fake_dashboard(request, timeout=None):
     """Stands in for the running feedback stack's /api/dashboard/export."""
-    return io.BytesIO(CSV_EXPORT if "format=csv" in url else JSON_EXPORT)
+    return io.BytesIO(XLSX_EXPORT if "format=xlsx" in request.full_url else JSON_EXPORT)
 
 
 def _secret_names(deployment_id: str) -> list[str]:
@@ -68,7 +68,7 @@ def _terminate(record: dict, force: bool = False):
 
 
 @mock_aws
-@patch("app.core.exports.urllib.request.urlopen", side_effect=_fake_dashboard)
+@patch("app.core.feedback_client.urllib.request.urlopen", side_effect=_fake_dashboard)
 def test_feedback_teardown_exports_first_then_deletes_everything(_mock_urlopen) -> None:
     record = _deploy_feedback()
     assert _secret_names(record["deployment_id"])  # POSTGRES_PASSWORD + DASHBOARD_TOKEN exist
@@ -76,7 +76,7 @@ def test_feedback_teardown_exports_first_then_deletes_everything(_mock_urlopen) 
     response = _terminate(record)
     assert response.status_code == 200, response.text
     exports = response.json()["exports"]
-    assert Path(exports["csv"]).read_bytes() == CSV_EXPORT
+    assert Path(exports["xlsx"]).read_bytes() == XLSX_EXPORT
     assert Path(exports["json"]).read_bytes() == JSON_EXPORT
 
     assert _instance_state(record["instance_id"]) in ("shutting-down", "terminated")
@@ -84,13 +84,13 @@ def test_feedback_teardown_exports_first_then_deletes_everything(_mock_urlopen) 
     saved = history.get_deployment(record["deployment_id"])
     assert saved["status"] == "terminated" and saved["exports"] == exports
 
-    download = client.get(f"/deployments/{record['deployment_id']}/export/csv")
+    download = client.get(f"/deployments/{record['deployment_id']}/export/xlsx")
     assert download.status_code == 200
-    assert download.content == CSV_EXPORT
+    assert download.content == XLSX_EXPORT
 
 
 @mock_aws
-@patch("app.core.exports.urllib.request.urlopen", side_effect=urllib.error.URLError("timed out"))
+@patch("app.core.feedback_client.urllib.request.urlopen", side_effect=urllib.error.URLError("timed out"))
 def test_feedback_teardown_stops_when_export_fails_and_deletes_nothing(_mock_urlopen) -> None:
     record = _deploy_feedback()
 
@@ -103,7 +103,7 @@ def test_feedback_teardown_stops_when_export_fails_and_deletes_nothing(_mock_url
 
 
 @mock_aws
-@patch("app.core.exports.urllib.request.urlopen", side_effect=urllib.error.URLError("timed out"))
+@patch("app.core.feedback_client.urllib.request.urlopen", side_effect=urllib.error.URLError("timed out"))
 def test_terminate_anyway_skips_the_export(_mock_urlopen) -> None:
     record = _deploy_feedback()
 

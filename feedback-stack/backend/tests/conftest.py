@@ -2,6 +2,8 @@ import os
 import subprocess
 import time
 
+import pytest
+
 CONTAINER_NAME = "feedback-stack-test-postgres"
 TEST_DB_PORT = 55432
 TEST_DB_PASSWORD = "test"
@@ -52,3 +54,18 @@ def pytest_configure(config) -> None:
 
 def pytest_unconfigure(config) -> None:
     subprocess.run(["docker", "rm", "-f", CONTAINER_NAME], capture_output=True)
+
+
+@pytest.fixture(autouse=True)
+def fresh_database():
+    """Every test starts from a clean slate: the default questionnaire as the
+    active version 1, no responses, no agent versions — so a test that
+    publishes or activates a version can't leak into another."""
+    from app.db import ensure_schema, get_connection
+    from app.questions import DEFAULT_QUESTIONS
+
+    initial = [q.model_dump() for q in DEFAULT_QUESTIONS]
+    with get_connection() as conn:
+        ensure_schema(conn, initial)
+        conn.execute("TRUNCATE feedback, questionnaires, agent_versions RESTART IDENTITY CASCADE")
+        ensure_schema(conn, initial)

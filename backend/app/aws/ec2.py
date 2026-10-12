@@ -1,4 +1,5 @@
 import ipaddress
+import re
 import time
 import urllib.error
 import urllib.request
@@ -218,6 +219,7 @@ def render_user_data(
     deployment_id: str,
     region: str,
     needs_repo_token: bool = False,
+    commit_sha: str | None = None,
 ) -> str:
     """Builds the boot script: install Docker, fetch secrets from SSM, clone, run.
 
@@ -279,6 +281,16 @@ def render_user_data(
         )
     else:
         clone_lines = f'git clone --depth 1 "{repo_url}" /opt/agent-repo\n'
+
+    if commit_sha:
+        # Run exactly the commit that was validated, even if the branch has
+        # moved on in the minutes since (GitHub serves any commit by its id).
+        if not re.fullmatch(r"[0-9a-f]{40}", commit_sha):
+            raise ValueError(f"not a full git commit id: {commit_sha!r}")
+        clone_lines += (
+            f"git -C /opt/agent-repo fetch --depth 1 origin {commit_sha}\n"
+            f"git -C /opt/agent-repo checkout --detach {commit_sha}\n"
+        )
 
     return (
         "#!/bin/bash\n"
@@ -343,6 +355,7 @@ def launch_app_instance(
     instance_name: str | None = None,
     github_token: str | None = None,
     ingress: list[str] = (OPEN_CIDR,),
+    commit_sha: str | None = None,
 ) -> dict:
     """Provisions the app EC2 instance and returns {"instance_id", "public_ip",
     "security_group_id"}. `ingress` is the CIDR list from ingress_cidrs().
@@ -366,6 +379,7 @@ def launch_app_instance(
         deployment_id=deployment_id,
         region=session.region_name,
         needs_repo_token=bool(github_token),
+        commit_sha=commit_sha,
     )
 
     security_group_id = create_security_group(

@@ -66,6 +66,7 @@ function QuestionField({ question, onChange }) {
 
 export default function App() {
   const [questions, setQuestions] = useState(null);
+  const [version, setVersion] = useState(null);
   const [status, setStatus] = useState("loading"); // loading | ready | submitting | done | error
   const [error, setError] = useState(null);
 
@@ -73,7 +74,8 @@ export default function App() {
     fetch("/api/questions")
       .then((res) => res.json())
       .then((data) => {
-        setQuestions(data);
+        setQuestions(data.questions);
+        setVersion(data.version);
         setStatus("ready");
       })
       .catch(() => {
@@ -96,7 +98,9 @@ export default function App() {
       res = await fetch("/api/feedback", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ answers: questions }),
+        // The version this page showed — stays correct even if a newer one is
+        // published while the reviewer is still filling it in.
+        body: JSON.stringify({ answers: questions, questionnaire_version: version }),
       });
     } catch {
       setError("Could not reach the server. Check your connection and try again.");

@@ -11,7 +11,216 @@ const DECISION_LABELS = {
   base_url_name: "Base URL env var",
   instance_type: "Instance type",
   ebs_size_gb: "EBS size",
+  commit_sha: "Commit",
+  commit_message: "Commit message",
+  agent_repo: "Collects feedback for",
 };
+
+const shortRepo = (url) => url.replace(/^https?:\/\/(www\.)?github\.com\//, "");
+
+// The commit a linked feedback stack is stamping responses with: the newest
+// running deployment of its agent repo (same rule the backend uses when it
+// notifies the stack — see link_to_live_agent / announce_agent_version).
+function liveAgentFor(records, agentRepo) {
+  const normalize = (url) => url.trim().replace(/\/+$/, "").replace(/\.git$/, "").toLowerCase();
+  return records.find(
+    (r) =>
+      r.kind === "agent" &&
+      r.status === "running" &&
+      r.decisions?.commit_sha &&
+      r.decisions?.repo_url &&
+      normalize(r.decisions.repo_url) === normalize(agentRepo)
+  );
+}
+
+function CommitLine({ sha, message }) {
+  return (
+    <>
+      <code>{sha.slice(0, 7)}</code>
+      {message ? ` — ${message}` : ""}
+    </>
+  );
+}
+
+const EXPORT_LABELS = { xlsx: "Download Excel", json: "Download JSON", csv: "Download CSV" };
+
+// API calls are signed (see apiClient), so a plain <a href> can't download —
+// fetch the file and hand it to the browser as a blob instead.
+async function saveDownload(url, filename) {
+  const res = await apiFetch(url);
+  if (!res.ok) throw new Error();
+  const objectUrl = URL.createObjectURL(await res.blob());
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(objectUrl);
+}
+
+async function apiJson(url, options) {
+  const res = await apiFetch(url, options);
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new Error(
+      (Array.isArray(data?.detail)
+        ? data.detail.map((d) => d.msg.replace(/^Value error, /, "")).join("; ")
+        : data?.detail) || "Request failed"
+    );
+  }
+  return data;
+}
+
+// Questionnaire versions on a running feedback stack: publishing or
+// activating one changes the form at the same URL — no redeploy. Loaded
+// only when opened, so an unreachable stack never slows the whole tab down.
+function QuestionnairePanel({ record }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [file, setFile] = useState(null);
+  const [fileInputKey, setFileInputKey] = useState(0); // bumped to clear the native file picker
+  const [activate, setActivate] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState(null);
+  const [error, setError] = useState(null);
+  const base = `${BACKEND_URL}/deployments/${record.deployment_id}/questionnaires`;
+
+  async function load() {
+    setLoading(true);
+    try {
+      setData(await apiJson(base));
+      setError(null);
+    } catch (e) {
+      setError(e.message);
+    }
+    setLoading(false);
+  }
+
+  async function act(run, successMessage) {
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await run();
+      setMessage(successMessage(result));
+      await load();
+    } catch (e) {
+      setError(e.message);
+    }
+    setBusy(false);
+  }
+
+  async function publish() {
+    const questionnaire_json = await file.text();
+    await act(
+      () =>
+        apiJson(base, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ questionnaire_json, activate }),
+        }),
+      (result) => `✓ Published v${result.version}${activate ? " — the form shows it from the next page load" : ""}.`
+    );
+    setFile(null);
+    setFileInputKey((k) => k + 1);
+  }
+
+  const active = data?.questionnaires.find((q) => q.is_active);
+
+  return (
+    <details className="history-decisions questionnaire-panel" onToggle={(e) => e.target.open && !data && load()}>
+      <summary>Questionnaire{active ? ` — v${active.version} active` : ""}</summary>
+      <div className="questionnaire-body">
+        {loading && !data && <p className="section-hint">Loading versions from the feedback stack…</p>}
+
+        {data && (
+          <>
+            <table className="version-table">
+              <thead>
+                <tr>
+                  <th>Version</th>
+                  <th>Questions</th>
+                  <th>Created</th>
+                  <th>Responses</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {data.questionnaires
+                  .slice()
+                  .reverse()
+                  .map((q) => (
+                    <tr key={q.version}>
+                      <td className="version-name">
+                        v{q.version}
+                        {q.is_active && <span className="version-active">active</span>}
+                      </td>
+                      <td>{q.questions.length}</td>
+                      <td>{formatTimestamp(q.created_at)}</td>
+                      <td>{q.responses}</td>
+                      <td>
+                        <div className="version-actions">
+                          {!q.is_active && (
+                            <button
+                              type="button"
+                              className="link-btn"
+                              disabled={busy}
+                              onClick={() =>
+                                act(
+                                  () => apiJson(`${base}/${q.version}/activate`, { method: "POST" }),
+                                  () => `✓ v${q.version} is now active — the form shows it from the next page load.`
+                                )
+                              }
+                            >
+                              Activate
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="link-btn"
+                            onClick={() =>
+                              saveDownload(`${base}/${q.version}/download`, `questionnaire-v${q.version}.json`).catch(
+                                () => setError("Could not download that version.")
+                              )
+                            }
+                          >
+                            Download JSON
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+
+            <div className="questionnaire-upload">
+              <span className="questionnaire-upload-title">Publish a new version</span>
+              <span className="section-hint">
+                Same JSON format as the original upload. To add questions, download the current version, edit it,
+                and upload it here.
+              </span>
+              <input
+                key={fileInputKey}
+                type="file"
+                accept=".json,application/json"
+                onChange={(e) => setFile(e.target.files[0] || null)}
+              />
+              <label className="questionnaire-activate">
+                <input type="checkbox" checked={activate} onChange={(e) => setActivate(e.target.checked)} />
+                Make it the active version now
+              </label>
+              <button type="button" className="check-btn" disabled={!file || busy} onClick={publish}>
+                {busy ? "Working…" : "Publish version"}
+              </button>
+            </div>
+          </>
+        )}
+
+        {message && <p className="field-status field-status--ok">{message}</p>}
+        {error && <p className="terminate-error">{error}</p>}
+      </div>
+    </details>
+  );
+}
 
 function formatRelative(iso) {
   if (!iso) return "";
@@ -133,22 +342,16 @@ function AccessControl({ record, onChanged }) {
   );
 }
 
-function DeploymentRow({ record, onChanged, onTerminated }) {
+function DeploymentRow({ record, records, onChanged, onTerminated }) {
   const [downloadError, setDownloadError] = useState(null);
 
-  // Signed like every other API call (see apiClient), so a plain <a href>
-  // can't be used — fetch the file and hand it to the browser as a blob.
   async function downloadExport(fmt) {
     setDownloadError(null);
     try {
-      const res = await apiFetch(`${BACKEND_URL}/deployments/${record.deployment_id}/export/${fmt}`);
-      if (!res.ok) throw new Error();
-      const url = URL.createObjectURL(await res.blob());
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `feedback-${record.deployment_id}.${fmt}`;
-      link.click();
-      URL.revokeObjectURL(url);
+      await saveDownload(
+        `${BACKEND_URL}/deployments/${record.deployment_id}/export/${fmt}`,
+        `feedback-${record.deployment_id}.${fmt}`
+      );
     } catch {
       setDownloadError("Could not download the export — it may have been moved or deleted from data/exports/.");
     }
@@ -179,6 +382,29 @@ function DeploymentRow({ record, onChanged, onTerminated }) {
         )}
       </div>
 
+      {record.kind === "agent" && record.decisions?.commit_sha && (
+        <p className="history-row-commit">
+          Commit <CommitLine sha={record.decisions.commit_sha} message={record.decisions.commit_message} />
+        </p>
+      )}
+      {record.kind === "feedback" && record.decisions?.agent_repo && (
+        <p className="history-row-commit">
+          Collects feedback for <strong>{shortRepo(record.decisions.agent_repo)}</strong>
+          {record.status === "running" &&
+            (() => {
+              const live = liveAgentFor(records, record.decisions.agent_repo);
+              return live ? (
+                <>
+                  {" "}
+                  · live agent <CommitLine sha={live.decisions.commit_sha} message={live.decisions.commit_message} />
+                </>
+              ) : (
+                " · no running agent with a recorded commit"
+              );
+            })()}
+        </p>
+      )}
+
       <div className="history-row-links">
         {record.links.map((link) => (
           <a key={link.url} className="link-chip" href={link.url} target="_blank" rel="noreferrer">
@@ -198,18 +424,19 @@ function DeploymentRow({ record, onChanged, onTerminated }) {
 
       <DecisionsList decisions={record.decisions} />
 
+      {record.status === "running" && record.kind === "feedback" && <QuestionnairePanel record={record} />}
+
       {record.status === "running" && <AccessControl record={record} onChanged={onChanged} />}
 
       {record.exports && (
         <div className="history-access">
           <div className="history-access-summary">
             <span>Feedback exported before teardown:</span>
-            <button type="button" className="link-btn" onClick={() => downloadExport("csv")}>
-              Download CSV
-            </button>
-            <button type="button" className="link-btn" onClick={() => downloadExport("json")}>
-              Download JSON
-            </button>
+            {Object.keys(record.exports).map((fmt) => (
+              <button key={fmt} type="button" className="link-btn" onClick={() => downloadExport(fmt)}>
+                {EXPORT_LABELS[fmt] || `Download ${fmt}`}
+              </button>
+            ))}
           </div>
           {downloadError && <p className="terminate-error">{downloadError}</p>}
         </div>
@@ -393,7 +620,7 @@ function Leftovers({ onChanged }) {
   );
 }
 
-export default function DeploymentHistory({ refreshKey, onTerminated }) {
+export default function DeploymentHistory({ refreshKey, isActive, onTerminated }) {
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -410,8 +637,12 @@ export default function DeploymentHistory({ refreshKey, onTerminated }) {
       .finally(() => setLoading(false));
   }
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(load, [refreshKey]);
+  // Reloaded whenever the tab is shown, not just after deploys made from this
+  // window — a deploy from another browser tab still shows up.
+  useEffect(() => {
+    if (isActive) load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshKey, isActive]);
 
   const running = records.filter((r) => r.status === "running");
   const terminated = records.filter((r) => r.status === "terminated");
@@ -439,7 +670,13 @@ export default function DeploymentHistory({ refreshKey, onTerminated }) {
               <h2 className="section-title">Running</h2>
               <div className="history-list">
                 {running.map((r) => (
-                  <DeploymentRow key={r.deployment_id} record={r} onChanged={load} onTerminated={onTerminated} />
+                  <DeploymentRow
+                    key={r.deployment_id}
+                    record={r}
+                    records={records}
+                    onChanged={load}
+                    onTerminated={onTerminated}
+                  />
                 ))}
               </div>
             </section>
@@ -450,7 +687,13 @@ export default function DeploymentHistory({ refreshKey, onTerminated }) {
               <h2 className="section-title">Terminated</h2>
               <div className="history-list">
                 {terminated.map((r) => (
-                  <DeploymentRow key={r.deployment_id} record={r} onChanged={load} onTerminated={onTerminated} />
+                  <DeploymentRow
+                    key={r.deployment_id}
+                    record={r}
+                    records={records}
+                    onChanged={load}
+                    onTerminated={onTerminated}
+                  />
                 ))}
               </div>
             </section>

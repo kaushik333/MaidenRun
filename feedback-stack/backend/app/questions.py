@@ -62,6 +62,28 @@ def parse_questions_json(text: str) -> list[Question]:
     return [Question(**q) for q in questions]
 
 
+def parse_questionnaire_upload(text: str) -> list[Question]:
+    """Strict parsing for a new questionnaire version uploaded from the control
+    plane: same JSON format as the file bundled at deploy time, but unlike
+    load_questions there's no silent fallback — the uploader gets told exactly
+    what's wrong. Question text must be unique within a version, since each
+    question becomes its own column in exports."""
+    try:
+        questions = parse_questions_json(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Not valid JSON: {exc}") from exc
+    except (ValidationError, AttributeError, TypeError) as exc:
+        raise ValueError(f"Doesn't match the questionnaire format ({{\"questions\": [...]}}): {exc}") from exc
+    if not questions:
+        raise ValueError('The questionnaire has no questions — expected {"questions": [...]} with at least one.')
+    seen, duplicates = set(), set()
+    for q in questions:
+        (duplicates if q.question in seen else seen).add(q.question)
+    if duplicates:
+        raise ValueError(f"Each question must be unique within a version — repeated: {sorted(duplicates)}")
+    return questions
+
+
 def load_questions(path: Path) -> list[Question]:
     """Loads the questionnaire from `path` if it exists and is non-empty,
     otherwise falls back to DEFAULT_QUESTIONS. A malformed file also falls

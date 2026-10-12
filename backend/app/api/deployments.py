@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from botocore.exceptions import ClientError
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
 from app.api.deploy import AWS_REGIONS, resolve_ingress
@@ -16,9 +16,10 @@ from app.aws.feedback_stack import EBS_SIZE_GB as FEEDBACK_EBS_SIZE_GB
 from app.aws.feedback_stack import INSTANCE_TYPE as FEEDBACK_INSTANCE_TYPE
 from app.aws.pricing import estimate_ec2_cost, estimate_s3_cost
 from app.aws.sweep import delete_leftover, scan_bucket, scan_region
-from app.core import history
+from app.core import feedback_client, history
 from app.core.config import settings
 from app.core.errors import classify_error, reraise_as_http_error
+from app.core.feedback_client import FeedbackStackError
 from app.core.logging import logger
 
 router = APIRouter()
@@ -139,12 +140,71 @@ def update_allowed_ips(deployment_id: str, request: AllowedIpsRequest) -> Deploy
 
 
 @router.get("/deployments/{deployment_id}/export/{fmt}")
-def download_export(deployment_id: str, fmt: Literal["csv", "json"]) -> FileResponse:
+def download_export(deployment_id: str, fmt: Literal["xlsx", "json", "csv"]) -> FileResponse:
     """The feedback saved locally when this feedback stack was torn down."""
     path = ((history.get_deployment(deployment_id) or {}).get("exports") or {}).get(fmt)
     if not path or not Path(path).is_file():
         raise HTTPException(status_code=404, detail="No saved export for this deployment")
     return FileResponse(path, filename=Path(path).name)
+
+
+# ---- questionnaire versions on a running feedback stack ----
+# Thin pass-throughs to the stack's own admin API (see app/core/feedback_client.py)
+# — publishing or activating a version changes the form at the same URL, with
+# no redeploy.
+
+
+def _running_feedback_stack(deployment_id: str) -> dict:
+    record = history.get_deployment(deployment_id)
+    if record is None or record.get("kind") != "feedback":
+        raise HTTPException(status_code=404, detail="Unknown feedback deployment")
+    if record.get("status") != "running":
+        raise HTTPException(status_code=409, detail="This feedback stack has been terminated")
+    return record
+
+
+def _forward(call, *args):
+    try:
+        return call(*args)
+    except FeedbackStackError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.detail) from exc
+
+
+class NewQuestionnaireVersion(BaseModel):
+    questionnaire_json: str = Field(min_length=1)
+    activate: bool = True
+
+
+@router.get("/deployments/{deployment_id}/questionnaires")
+def questionnaire_versions(deployment_id: str) -> dict:
+    """Every questionnaire version (with response counts) and agent version."""
+    return _forward(feedback_client.list_versions, _running_feedback_stack(deployment_id))
+
+
+@router.post("/deployments/{deployment_id}/questionnaires", status_code=201)
+def publish_questionnaire_version(deployment_id: str, request: NewQuestionnaireVersion) -> dict:
+    record = _running_feedback_stack(deployment_id)
+    return _forward(feedback_client.publish_questionnaire, record, request.questionnaire_json, request.activate)
+
+
+@router.post("/deployments/{deployment_id}/questionnaires/{version}/activate")
+def activate_questionnaire_version(deployment_id: str, version: int) -> dict:
+    return _forward(feedback_client.activate_questionnaire, _running_feedback_stack(deployment_id), version)
+
+
+@router.get("/deployments/{deployment_id}/questionnaires/{version}/download")
+def download_questionnaire_version(deployment_id: str, version: int) -> JSONResponse:
+    """A version in the same JSON format the deploy form takes — the starting
+    point for editing it into a new version."""
+    versions = questionnaire_versions(deployment_id)["questionnaires"]
+    match = next((q for q in versions if q["version"] == version), None)
+    if match is None:
+        raise HTTPException(status_code=404, detail=f"No questionnaire version {version}")
+    questions = [{k: v for k, v in q.items() if k != "answer"} for q in match["questions"]]
+    return JSONResponse(
+        {"questions": questions},
+        headers={"Content-Disposition": f'attachment; filename="questionnaire-v{version}.json"'},
+    )
 
 
 LeftoverKind = Literal["instance", "security_group", "secrets", "bucket"]

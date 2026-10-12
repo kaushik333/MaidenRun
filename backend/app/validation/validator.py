@@ -166,4 +166,9 @@ def validate_repo(repo_url: str, github_token: str | None = None) -> ValidateRep
         clone_error = clone_repo(repo_url, dest, github_token)
         if clone_error:
             return ValidateRepoResponse(valid=False, error=clone_error)
-        return validate_repo_dir(dest)
+        result = validate_repo_dir(dest)
+        head = subprocess.run(
+            ["git", "-C", str(dest), "log", "-1", "--format=%H%n%s"], capture_output=True, text=True, check=True
+        ).stdout.split("\n")
+        result.commit_sha, result.commit_message = head[0], head[1]
+        return result

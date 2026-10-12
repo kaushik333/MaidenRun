@@ -94,6 +94,29 @@
   .response-answers strong { font-weight: 600; color: var(--color-text-muted); }
 
   .empty { color: var(--color-text-faint); font-size: 0.85rem; margin: 0; }
+
+  .filters { display: flex; flex-wrap: wrap; gap: 0.75rem 1.25rem; align-items: center; }
+  .filters label { display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; font-weight: 600; color: var(--color-text-muted); }
+  .filters select {
+    padding: 0.45rem 0.7rem; border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+    background: var(--color-surface); font-size: 0.85rem; font-family: inherit; color: var(--color-text); max-width: 360px;
+  }
+  .filters select:focus { outline: none; border-color: var(--color-primary); box-shadow: 0 0 0 3px var(--color-primary-soft); }
+
+  .compare-card {
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg); padding: 1.4rem 1.5rem; box-shadow: var(--shadow-card);
+    display: flex; flex-direction: column; gap: 0.9rem; overflow-x: auto;
+  }
+  .compare-card h3 { margin: 0; font-size: 0.95rem; font-weight: 700; }
+  .compare-card p.hint { margin: 0; font-size: 0.8rem; color: var(--color-text-faint); }
+  .compare-table { border-collapse: collapse; font-size: 0.82rem; min-width: 100%; }
+  .compare-table th, .compare-table td { text-align: left; padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--color-border); vertical-align: top; }
+  .compare-table th { font-size: 0.72rem; font-weight: 700; color: var(--color-text-muted); }
+  .compare-table td.num { font-variant-numeric: tabular-nums; }
+  .compare-table code { font-size: 0.78rem; color: var(--color-text); }
+  .compare-version-note { display: block; color: var(--color-text-faint); font-size: 0.76rem; margin-top: 0.15rem; }
+  .compare-average { font-weight: 700; color: var(--color-primary); }
 </style>
 </head>
 <body>
@@ -104,12 +127,19 @@
         <p class="meta" id="meta-line">Loading…</p>
       </div>
       <div class="export-links">
-        <a id="export-csv" download>Download CSV</a>
+        <a id="export-xlsx" download>Download Excel</a>
         <a id="export-json" download>Download JSON</a>
       </div>
     </div>
 
+    <div class="filters">
+      <label>Questionnaire <select id="questionnaire-filter"></select></label>
+      <label>Agent version <select id="agent-filter"></select></label>
+    </div>
+
     <div class="kpi-row" id="kpi-row"></div>
+
+    <div class="compare-card" id="compare" hidden></div>
 
     <div class="summary-grid" id="summary"></div>
 
@@ -124,7 +154,7 @@
 
   <script>
     const token = new URLSearchParams(window.location.search).get("token") || "";
-    for (const format of ["csv", "json"]) {
+    for (const format of ["xlsx", "json"]) {
       document.getElementById(`export-${format}`).href =
         `/api/dashboard/export?token=${encodeURIComponent(token)}&format=${format}`;
     }
@@ -235,23 +265,108 @@
 
     document.getElementById("filter").addEventListener("input", applyFilter);
 
-    fetch(`/api/dashboard/feedback?token=${encodeURIComponent(token)}`)
-      .then((res) => {
-        if (!res.ok) throw new Error("unauthorized");
-        return res.json();
-      })
-      .then((data) => {
-        allRows = data.rows;
-        document.getElementById("meta-line").textContent =
-          `${data.rows.length} submission${data.rows.length === 1 ? "" : "s"}`;
-        renderKpis(data.rows, data.summary);
-        renderSummary(data.summary);
-        renderRows(allRows);
-      })
-      .catch(() => {
-        document.body.innerHTML =
-          '<main style="padding:3rem;text-align:center;font-family:sans-serif;"><h1>Access denied</h1><p>Missing or invalid token.</p></main>';
-      });
+    function agentLabel(agent) {
+      if (!agent) return "unknown (before agent tracking)";
+      return `${agent.commit_sha.slice(0, 7)}${agent.commit_message ? ` — ${agent.commit_message}` : ""}`;
+    }
+
+    function fillSelect(id, options, selected) {
+      document.getElementById(id).innerHTML = options
+        .map(([value, label]) => `<option value="${value}"${String(value) === String(selected) ? " selected" : ""}>${escapeHtml(label)}</option>`)
+        .join("");
+    }
+
+    // One table row per agent version, one column per multiple-choice
+    // question: a numeric scale shows its average, anything else the share
+    // of each answer — so "did my change help?" is readable at a glance.
+    function renderComparison(data) {
+      const el = document.getElementById("compare");
+      if (data.questionnaire_version === 0 || data.comparison.length < 2) {
+        el.hidden = true;
+        return;
+      }
+      const agents = Object.fromEntries(data.agent_versions.map((a) => [a.id, a]));
+      const choiceQuestions = [];
+      for (const group of data.comparison) {
+        for (const q of group.summary) {
+          if (q.options && !choiceQuestions.some((c) => c.question === q.question)) choiceQuestions.push(q);
+        }
+      }
+      const cell = (group, question) => {
+        const q = group.summary.find((s) => s.question === question.question);
+        const total = q ? Object.values(q.counts).reduce((a, b) => a + b, 0) : 0;
+        if (!total) return "—";
+        if (question.options.every((opt) => opt.trim() !== "" && !Number.isNaN(Number(opt)))) {
+          const avg = question.options.reduce((sum, opt) => sum + Number(opt) * (q.counts[opt] || 0), 0) / total;
+          return `<span class="compare-average">${avg.toFixed(1)}</span> avg`;
+        }
+        return question.options
+          .filter((opt) => q.counts[opt])
+          .map((opt) => `${escapeHtml(opt)} ${Math.round((q.counts[opt] / total) * 100)}%`)
+          .join(" · ");
+      };
+      const header = `<tr><th>Agent version</th><th>Responses</th>${choiceQuestions.map((q) => `<th>${escapeHtml(q.question)}</th>`).join("")}</tr>`;
+      const rows = data.comparison
+        .map((group) => {
+          const agent = agents[group.agent_version_id];
+          const since = agent ? `<span class="compare-version-note">live from ${new Date(agent.activated_at).toLocaleString()}</span>` : "";
+          return `<tr><td><code>${escapeHtml(agentLabel(agent))}</code>${since}</td><td class="num">${group.responses}</td>${choiceQuestions.map((q) => `<td>${cell(group, q)}</td>`).join("")}</tr>`;
+        })
+        .join("");
+      el.innerHTML = `<h3>Compare agent versions</h3>
+        <p class="hint">Same questionnaire, split by which agent version was live when each response came in.</p>
+        <table class="compare-table">${header}${rows}</table>`;
+      el.hidden = false;
+    }
+
+    function load() {
+      const params = new URLSearchParams({ token });
+      const questionnaire = document.getElementById("questionnaire-filter").value;
+      const agent = document.getElementById("agent-filter").value;
+      if (questionnaire) params.set("questionnaire_version", questionnaire);
+      if (agent) params.set("agent_version", agent);
+
+      fetch(`/api/dashboard/feedback?${params}`)
+        .then((res) => {
+          if (!res.ok) throw new Error("unauthorized");
+          return res.json();
+        })
+        .then((data) => {
+          fillSelect(
+            "questionnaire-filter",
+            [
+              ...data.questionnaires
+                .slice()
+                .reverse()
+                .map((q) => [q.version, `v${q.version}${q.is_active ? " (active)" : ""} · ${q.responses} response${q.responses === 1 ? "" : "s"}`]),
+              [0, "All versions"],
+            ],
+            data.questionnaire_version
+          );
+          fillSelect(
+            "agent-filter",
+            [["", "All agent versions"], ...data.agent_versions.slice().reverse().map((a) => [a.id, agentLabel(a) + (a.is_active ? " (live)" : "")])],
+            agent
+          );
+
+          allRows = data.rows;
+          const versionText = data.questionnaire_version === 0 ? "all questionnaire versions" : `questionnaire v${data.questionnaire_version}`;
+          document.getElementById("meta-line").textContent =
+            `${data.rows.length} submission${data.rows.length === 1 ? "" : "s"} · ${versionText}`;
+          renderKpis(data.rows, data.summary);
+          renderComparison(data);
+          renderSummary(data.summary);
+          applyFilter();
+        })
+        .catch(() => {
+          document.body.innerHTML =
+            '<main style="padding:3rem;text-align:center;font-family:sans-serif;"><h1>Access denied</h1><p>Missing or invalid token.</p></main>';
+        });
+    }
+
+    document.getElementById("questionnaire-filter").addEventListener("change", load);
+    document.getElementById("agent-filter").addEventListener("change", load);
+    load();
   </script>
 </body>
 </html>

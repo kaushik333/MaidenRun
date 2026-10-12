@@ -28,6 +28,7 @@ from app.aws.s3_bundle import (
 from app.core import history
 from app.core.config import settings
 from app.core.errors import classify_error
+from app.core.feedback_client import link_to_live_agent
 from app.core.logging import logger
 
 router = APIRouter()
@@ -54,6 +55,9 @@ class DeployFeedbackRequest(BaseModel):
     # plane's; this layer only confirms it's non-empty, valid JSON before
     # ever touching AWS.
     questionnaire_json: str = Field(min_length=1)
+    # The agent repo this stack collects feedback for — every later deploy of
+    # that repo tells this stack which commit is live. Optional.
+    agent_repo: str | None = None
     # IPv4 addresses/ranges allowed to reach :8002/:8003 — empty means everyone.
     allowed_ips: list[str] = Field(default_factory=list)
 
@@ -131,6 +135,7 @@ def _run_feedback_deployment(
     questionnaire_json: str,
     allowed_ips: list[str],
     ingress: list[str],
+    agent_repo: str | None = None,
 ) -> None:
     """Uploads the bundle, launches the feedback-stack instance, and waits
     for it to become healthy — in a background thread, independent of
@@ -192,7 +197,7 @@ def _run_feedback_deployment(
                 bundle_deleted_at=bundle_deleted_at,
             )
 
-        history.record_deployment({
+        record = {
             "deployment_id": deployment_id,
             "kind": "feedback",
             "status": "running",
@@ -211,8 +216,12 @@ def _run_feedback_deployment(
                 "bundle_uploaded_at": bundle_uploaded_at.isoformat(),
                 "bundle_deleted_at": bundle_deleted_at.isoformat(),
                 "allowed_ips": allowed_ips,
+                "agent_repo": agent_repo,
             },
-        })
+        }
+        history.record_deployment(record)
+        if agent_repo:
+            link_to_live_agent(record)
     except Exception as exc:  # deliberately broad — terminal handler for the whole background flow
         logger.exception("feedback-stack deployment %s failed", deployment_id)
 
@@ -291,6 +300,7 @@ def deploy_feedback(
         request.questionnaire_json,
         request.allowed_ips,
         ingress,
+        request.agent_repo or None,
     )
     return DeployFeedbackAcceptedResponse(deployment_id=deployment_id)
 

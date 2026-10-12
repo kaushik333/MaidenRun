@@ -40,9 +40,17 @@ const initialState = {
   region: AWS_REGIONS[0],
   instance_name: "",
   allowed_ips: "",
+  agent_repo: "",
 };
 
-export default function DeployFeedbackStack({ onDeploySuccess, lastAwsRegion, onTerminated, terminatedIds }) {
+export default function DeployFeedbackStack({
+  refreshKey,
+  isActive,
+  onDeploySuccess,
+  lastAwsRegion,
+  onTerminated,
+  terminatedIds,
+}) {
   const [form, setForm] = useState(initialState);
   const [questionnaireFile, setQuestionnaireFile] = useState(null);
   const [fileError, setFileError] = useState(null);
@@ -52,7 +60,39 @@ export default function DeployFeedbackStack({ onDeploySuccess, lastAwsRegion, on
   const [hasStarted, setHasStarted] = useState(false);
   const [deployCount, setDeployCount] = useState(0);
   const [showAwsKeys, setShowAwsKeys] = useState(false);
+  const [agentRepos, setAgentRepos] = useState([]);
+  const [agentRepoTouched, setAgentRepoTouched] = useState(false);
   const pollGenerationRef = useRef(0);
+
+  // Agent repos this stack can collect feedback for — every later deploy of
+  // the chosen repo tells the stack which commit is live. Refetched whenever
+  // this tab is shown or a deploy/terminate happens, so an agent deployed a
+  // minute ago is listed as running. A repo counts as running if ANY of its
+  // deployments is; records arrive newest first, so the commit shown is the
+  // newest running one — the one the stack gets told about.
+  useEffect(() => {
+    if (!isActive) return;
+    apiFetch(`${BACKEND_URL}/deployments`)
+      .then((res) => res.json())
+      .then((records) => {
+        const repos = [];
+        for (const r of records) {
+          const repo = r.kind === "agent" && r.decisions?.repo_url;
+          if (!repo) continue;
+          let entry = repos.find((x) => x.repo === repo);
+          if (!entry) repos.push((entry = { repo, running: false, commit: null }));
+          if (r.status === "running" && !entry.running) {
+            entry.running = true;
+            entry.commit = r.decisions.commit_sha?.slice(0, 7) ?? null;
+          }
+        }
+        setAgentRepos(repos);
+        // Until the user picks one, follow the newest running agent.
+        if (!agentRepoTouched) setForm((f) => ({ ...f, agent_repo: repos.find((x) => x.running)?.repo ?? "" }));
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isActive, refreshKey]);
 
   // A deploy elsewhere in the app becomes known after this component has
   // already mounted — pick up its region and switch to the reuse affordance
@@ -144,6 +184,7 @@ export default function DeployFeedbackStack({ onDeploySuccess, lastAwsRegion, on
       instance_name: form.instance_name.trim() || null,
       questionnaire_json: questionnaireText,
       allowed_ips: parseAllowedIps(form.allowed_ips),
+      agent_repo: form.agent_repo || null,
     };
 
     setStepStatus("feedback_bundle", "active");
@@ -257,6 +298,30 @@ export default function DeployFeedbackStack({ onDeploySuccess, lastAwsRegion, on
           </section>
 
           <section className="form-section">
+            <div className="field">
+              <label htmlFor="feedback_agent_repo">Collects feedback for</label>
+              <select
+                id="feedback_agent_repo"
+                className="input"
+                value={form.agent_repo}
+                onChange={(e) => {
+                  setAgentRepoTouched(true);
+                  updateField("agent_repo", e.target.value);
+                }}
+              >
+                <option value="">No agent (don't track agent versions)</option>
+                {agentRepos.map(({ repo, running, commit }) => (
+                  <option key={repo} value={repo}>
+                    {repo.replace(/^https?:\/\/(www\.)?github\.com\//, "")}
+                    {running ? (commit ? ` — running ${commit}` : " — running") : " (not running)"}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <span className="section-hint">
+              Each response is stamped with the agent commit that was live when it came in, so the dashboard can
+              compare versions of your agent.
+            </span>
             <div className="field">
               <label htmlFor="feedback_instance_name">Instance name</label>
               <input

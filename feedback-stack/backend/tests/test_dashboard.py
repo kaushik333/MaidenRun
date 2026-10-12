@@ -1,14 +1,9 @@
-import csv
-import io
-import json
-import uuid
-
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.dashboard import router as dashboard_router
 from app.core.config import settings
-from app.db import ensure_schema, get_connection, insert_feedback
+from app.db import get_connection, insert_feedback
 
 # A standalone app around just the dashboard router, rather than the full
 # app.main — SERVICE_ROLE (which router main.py wires up at `/`) is read
@@ -38,8 +33,7 @@ SUBMISSION = [
 
 def _seed_row(answers: list[dict]) -> None:
     with get_connection() as conn:
-        ensure_schema(conn)
-        insert_feedback(conn, settings.deployment_id, answers)
+        insert_feedback(conn, settings.deployment_id, answers, questionnaire_version=1)
 
 
 def test_dashboard_page_rejects_missing_token():
@@ -72,7 +66,7 @@ def test_dashboard_feedback_api_returns_rows_and_aggregated_summary():
     assert response.status_code == 200
     body = response.json()
 
-    assert len(body["rows"]) >= 2  # other tests in this session may add more; just needs to include ours
+    assert len(body["rows"]) == 2
     assert all("submitted_at" in row for row in body["rows"])
 
     by_question = {s["question"]: s for s in body["summary"]}
@@ -83,38 +77,3 @@ def test_dashboard_feedback_api_returns_rows_and_aggregated_summary():
     comments = by_question["Anything specific to add?"]
     assert "Worked great." in comments["text_answers"]
 
-
-def test_export_rejects_missing_or_wrong_token():
-    assert client.get("/api/dashboard/export").status_code == 403
-    assert client.get("/api/dashboard/export", params={"token": "wrong"}).status_code == 403
-
-
-def test_export_csv_has_one_column_per_question_across_questionnaire_versions():
-    # Unique question text so rows from other tests in this shared DB don't matter.
-    tag = uuid.uuid4().hex[:8]
-    q_old, q_new = f"Old question {tag}", f"New question {tag}"
-    _seed_row([{"question": q_old, "answer": "Yes", "options": ["Yes", "No"], "optional": False}])
-    _seed_row([{"question": q_new, "answer": "Great, thanks", "options": None, "optional": True}])
-
-    response = client.get("/api/dashboard/export", params={"token": settings.dashboard_token, "format": "csv"})
-    assert response.status_code == 200
-    assert response.headers["content-type"].startswith("text/csv")
-    assert response.headers["content-disposition"].startswith("attachment;")
-
-    rows = list(csv.DictReader(io.StringIO(response.text)))
-    assert {"submitted_at", q_old, q_new} <= set(rows[0].keys())
-    old_row = next(r for r in rows if r[q_old] == "Yes")
-    new_row = next(r for r in rows if r[q_new] == "Great, thanks")
-    assert old_row[q_new] == "" and new_row[q_old] == ""  # each version's missing question is blank
-
-
-def test_export_json_returns_the_raw_stored_records():
-    tag = uuid.uuid4().hex[:8]
-    _seed_row([{"question": f"JSON question {tag}", "answer": "No", "options": ["Yes", "No"], "optional": False}])
-
-    response = client.get("/api/dashboard/export", params={"token": settings.dashboard_token, "format": "json"})
-    assert response.status_code == 200
-    records = json.loads(response.text)
-    match = next(r for r in records if r["answers"][0]["question"] == f"JSON question {tag}")
-    assert match["answers"][0]["answer"] == "No"
-    assert "submitted_at" in match

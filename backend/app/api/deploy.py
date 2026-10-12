@@ -23,8 +23,9 @@ from app.aws.pricing import EC2_HOURLY_RATES, estimate_ec2_cost
 from app.core import history
 from app.core.config import settings
 from app.core.errors import classify_error, reraise_as_http_error
-from app.core.exports import export_feedback
+from app.core.feedback_client import FeedbackStackError, announce_agent_version, export_feedback
 from app.core.logging import logger
+from app.validation.models import ValidateRepoResponse
 from app.validation.validator import validate_repo
 
 CPU_INSTANCE_TYPES = ("t3.small", "t3.medium", "m5.xlarge")
@@ -197,7 +198,7 @@ def _run_deployment(
     deployment_id: str,
     app_session,
     request: DeployRequest,
-    entry_point: str,
+    validation: ValidateRepoResponse,
     app_secrets: dict,
     ingress: list[str],
 ) -> None:
@@ -216,13 +217,14 @@ def _run_deployment(
             app_session,
             deployment_id=deployment_id,
             repo_url=request.repo_url,
-            entry_point=entry_point,
+            entry_point=validation.entry_point,
             instance_type=request.instance_type,
             ebs_size_gb=request.ebs_size_gb,
             secrets=app_secrets,
             instance_name=request.instance_name,
             github_token=request.github_token,
             ingress=ingress,
+            commit_sha=validation.commit_sha,
         )
         launched_at = datetime.now(UTC)
         _set_step(deployment_id, "app_compute", "done")
@@ -263,8 +265,14 @@ def _run_deployment(
                 "ebs_size_gb": request.ebs_size_gb,
                 "env_var_keys": [ev.key for ev in request.env_vars],
                 "allowed_ips": request.allowed_ips,
+                "commit_sha": validation.commit_sha,
+                "commit_message": validation.commit_message,
             },
         })
+        # Feedback stacks collecting feedback for this repo now stamp new
+        # responses with this commit.
+        if validation.commit_sha:
+            announce_agent_version(request.repo_url, validation.commit_sha, validation.commit_message or "")
     except Exception as exc:  # deliberately broad — terminal handler for the whole background flow
         logger.exception("deployment %s failed", deployment_id)
 
@@ -323,7 +331,7 @@ def deploy(request: DeployRequest, background_tasks: BackgroundTasks) -> DeployA
         _deployments[deployment_id] = _new_deployment_status()
 
     background_tasks.add_task(
-        _run_deployment, deployment_id, app_session, request, validation.entry_point, app_secrets, ingress
+        _run_deployment, deployment_id, app_session, request, validation, app_secrets, ingress
     )
     return DeployAcceptedResponse(deployment_id=deployment_id)
 
@@ -363,7 +371,7 @@ def terminate(request: TerminateRequest, background_tasks: BackgroundTasks) -> T
     if record and record.get("kind") == "feedback" and not request.force:
         try:
             exports = export_feedback(record)
-        except (OSError, ValueError) as exc:
+        except (FeedbackStackError, OSError) as exc:
             raise HTTPException(
                 status_code=409,
                 detail=f"Couldn't export this deployment's feedback before terminating: {exc}. "

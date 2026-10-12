@@ -10,6 +10,10 @@ class ValidateRepoResponse(BaseModel):
     valid: bool
     entry_point: str | None = None
     error: str | None = None
+    # The exact commit that was validated — the instance is pinned to it, and
+    # feedback is recorded against it.
+    commit_sha: str | None = None
+    commit_message: str | None = None
 
 
 class CheckResult(BaseModel):

@@ -1,7 +1,8 @@
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.api.compatibility_report import router as compatibility_report_router
 from app.api.deploy import rehydrate_agent_deployments
@@ -26,6 +27,19 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="MaidenRun", lifespan=lifespan)
+
+
+# Registered before CORSMiddleware so CORS wraps it: an unhandled exception
+# otherwise produces a response without CORS headers, which the browser
+# reports as "Could not reach the backend" — hiding the real error.
+@app.middleware("http")
+async def unexpected_errors_as_json(request: Request, call_next):
+    try:
+        return await call_next(request)
+    except Exception as exc:  # deliberately broad — last-resort handler for any endpoint
+        logger.exception("unhandled error on %s %s", request.method, request.url.path)
+        return JSONResponse(status_code=500, content={"detail": f"Unexpected backend error: {exc}"})
+
 
 app.add_middleware(
     CORSMiddleware,

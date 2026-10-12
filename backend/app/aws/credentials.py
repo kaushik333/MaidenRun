@@ -59,6 +59,11 @@ def get_session(
     user chose to deploy into this time.
     """
     region = region or settings.aws_default_region
+    # An empty AWS_PROFILE (docker-compose.yml passes it through even when the
+    # user never set one) makes the AWS SDK look for a profile named "" and
+    # fail every call, pasted keys included — treat it as unset.
+    if os.environ.get("AWS_PROFILE") == "":
+        del os.environ["AWS_PROFILE"]
     if access_key_id and secret_access_key:
         save_credentials(access_key_id, secret_access_key)
         return boto3.Session(

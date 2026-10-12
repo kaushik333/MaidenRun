@@ -149,3 +149,14 @@ def test_aws_identity_endpoint_explains_when_nothing_is_configured():
     body = TestClient(app).get("/aws-identity").json()
     assert body["available"] is False
     assert "AWS_PROFILE" in body["error"]
+
+
+def test_an_empty_aws_profile_env_var_is_treated_as_unset(monkeypatch):
+    # docker-compose.yml passes AWS_PROFILE=${AWS_PROFILE:-} through, so it is
+    # "" whenever the user never set one — that must not break pasted keys.
+    monkeypatch.setenv("AWS_PROFILE", "")
+    session = get_session(FAKE_ACCESS_KEY, FAKE_SECRET_KEY)
+    assert session.get_credentials().access_key == FAKE_ACCESS_KEY
+
+    monkeypatch.setenv("AWS_PROFILE", "")
+    assert get_session().get_credentials().access_key == FAKE_ACCESS_KEY  # the cached key, via the chain

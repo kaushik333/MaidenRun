@@ -15,9 +15,14 @@ CREDENTIAL_ERROR_CODES = {
     "InvalidClientTokenId",
     "AuthFailure",
     "SignatureDoesNotMatch",
-    "AccessDenied",
-    "AccessDeniedException",
 }
+# Valid credentials, but the IAM policy doesn't allow this action — almost
+# always a policy set up before the platform needed that permission.
+PERMISSION_ERROR_CODES = {"AccessDenied", "AccessDeniedException", "UnauthorizedOperation"}
+OUTDATED_POLICY_HINT = (
+    "Your IAM policy doesn't allow this yet — replace the inline policy on your MaidenRun IAM user with the "
+    "current infra/iam-policy.json (also shown in the app's AWS one-time setup)."
+)
 
 
 def classify_error(exc: Exception) -> tuple[int, str]:
@@ -42,6 +47,8 @@ def classify_error(exc: Exception) -> tuple[int, str]:
         message = exc.response["Error"]["Message"]
         if code in CREDENTIAL_ERROR_CODES:
             return 401, f"AWS rejected these credentials: {message}"
+        if code in PERMISSION_ERROR_CODES:
+            return 403, f"{OUTDATED_POLICY_HINT} AWS said: {message}"
         return 400, f"AWS rejected the request: {message}"
     # Checked before the (broader) Ec2LaunchError below, since it's a subclass:
     # provisioned fine, just never answered — a narrower, 504-shaped problem.

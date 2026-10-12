@@ -319,6 +319,7 @@ export default function DeployFeedbackStack({ onDeploySuccess, lastAwsRegion, on
               instanceName={result.instanceName}
               region={result.region}
               deploymentId={result.deploymentId}
+              kind="feedback"
               onTerminated={onTerminated}
               externallyTerminated={terminatedIds?.has(result.deploymentId)}
             />

@@ -421,7 +421,7 @@ def test_terminate_uses_cached_credentials_no_repaste_needed() -> None:
         "/terminate", json={"instance_id": launch_result["instance_id"], "region": settings.aws_default_region}
     )
     assert response.status_code == 200
-    assert response.json() == {"status": "terminating"}
+    assert response.json()["status"] == "terminating"
 
     instance = session.client("ec2").describe_instances(InstanceIds=[launch_result["instance_id"]])[
         "Reservations"

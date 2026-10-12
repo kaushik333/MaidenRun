@@ -51,7 +51,7 @@ def record_deployment(record: dict[str, Any]) -> None:
             logger.exception("failed to write deployment history file %s", path)
 
 
-def mark_terminated(deployment_id: str) -> None:
+def mark_terminated(deployment_id: str, exports: dict[str, str] | None = None) -> None:
     path = _file_path(deployment_id)
     with _history_lock:
         try:
@@ -61,6 +61,8 @@ def mark_terminated(deployment_id: str) -> None:
             record = json.loads(path.read_text())
             record["status"] = "terminated"
             record["terminated_at"] = datetime.now(UTC).isoformat()
+            if exports:
+                record["exports"] = exports
             _write(path, record)
         except (OSError, json.JSONDecodeError):
             logger.exception("failed to mark deployment %s terminated in history", deployment_id)

@@ -1,7 +1,11 @@
+import csv
+import io
+import json
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 
 from app.core.config import settings
 from app.db import get_connection, list_feedback
@@ -52,3 +56,40 @@ def dashboard_feedback(token: str | None = Query(default=None)) -> dict:
     with get_connection() as conn:
         rows = list_feedback(conn)
     return {"rows": rows, "summary": _summarize(rows)}
+
+
+def _to_csv(rows: list[dict]) -> str:
+    """One row per submission, one column per question. Columns are the union
+    of every submission's questions in first-seen order (oldest first), so
+    edits to the questionnaire between submissions still export cleanly —
+    a question a submission didn't have is just left blank."""
+    rows = sorted(rows, key=lambda row: row["submitted_at"])
+    questions = list(dict.fromkeys(answer["question"] for row in rows for answer in row["answers"]))
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(["submitted_at", *questions])
+    for row in rows:
+        answers = {answer["question"]: answer.get("answer", "") for answer in row["answers"]}
+        writer.writerow([row["submitted_at"], *(answers.get(q, "") for q in questions)])
+    return buffer.getvalue()
+
+
+@router.get("/api/dashboard/export")
+def dashboard_export(
+    token: str | None = Query(default=None), format: Literal["csv", "json"] = Query(default="csv")
+) -> Response:
+    """Every submission as a downloadable file — CSV for spreadsheets, JSON
+    for the raw stored records. Also what the control plane saves locally
+    before tearing the feedback stack down."""
+    _require_token(token)
+    with get_connection() as conn:
+        rows = list_feedback(conn)
+    if format == "csv":
+        body, media_type = _to_csv(rows), "text/csv"
+    else:
+        body, media_type = json.dumps(rows, indent=2), "application/json"
+    return Response(
+        content=body,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="feedback-{settings.deployment_id}.{format}"'},
+    )

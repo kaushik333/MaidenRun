@@ -31,6 +31,14 @@
   .shell { max-width: 1100px; margin: 0 auto; display: flex; flex-direction: column; gap: 1.75rem; }
   h1 { font-size: 1.55rem; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
   .meta { color: var(--color-text-muted); font-size: 0.88rem; margin: 0.3rem 0 0; }
+  .page-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }
+  .export-links { display: flex; gap: 0.5rem; }
+  .export-links a {
+    font-size: 0.82rem; font-weight: 700; color: var(--color-primary); text-decoration: none;
+    padding: 0.45rem 0.85rem; border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+    background: var(--color-surface);
+  }
+  .export-links a:hover { background: var(--color-primary-soft); }
 
   .kpi-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1.1rem; }
   .kpi-card {
@@ -90,9 +98,15 @@
 </head>
 <body>
   <div class="shell">
-    <div>
-      <h1>Feedback dashboard</h1>
-      <p class="meta" id="meta-line">Loading…</p>
+    <div class="page-header">
+      <div>
+        <h1>Feedback dashboard</h1>
+        <p class="meta" id="meta-line">Loading…</p>
+      </div>
+      <div class="export-links">
+        <a id="export-csv" download>Download CSV</a>
+        <a id="export-json" download>Download JSON</a>
+      </div>
     </div>
 
     <div class="kpi-row" id="kpi-row"></div>
@@ -110,6 +124,10 @@
 
   <script>
     const token = new URLSearchParams(window.location.search).get("token") || "";
+    for (const format of ["csv", "json"]) {
+      document.getElementById(`export-${format}`).href =
+        `/api/dashboard/export?token=${encodeURIComponent(token)}&format=${format}`;
+    }
     let allRows = [];
 
     function escapeHtml(s) {

@@ -2,22 +2,7 @@ import { useEffect, useState } from "react";
 import { BACKEND_URL } from "./config";
 import { apiFetch } from "./apiClient";
 import AllowedIpsField, { parseAllowedIps } from "./AllowedIpsField.jsx";
-
-// Mirrors backend/app/api/deploy.py's AWS_REGIONS — same curated list,
-// duplicated the same way DeployForm.jsx and DeployFeedbackStack.jsx do.
-const AWS_REGIONS = [
-  "us-east-1",
-  "us-east-2",
-  "us-west-2",
-  "eu-west-1",
-  "eu-central-1",
-  "ap-southeast-1",
-  "ap-southeast-2",
-  "ap-northeast-1",
-  "me-central-1",
-];
-
-const ACTIVE_POLL_INTERVAL_MS = 3000;
+import TerminateControl from "./TerminateControl.jsx";
 
 const DECISION_LABELS = {
   repo_url: "Repo",
@@ -149,51 +134,24 @@ function AccessControl({ record, onChanged }) {
 }
 
 function DeploymentRow({ record, onChanged, onTerminated }) {
-  const [confirming, setConfirming] = useState(false);
-  const [terminating, setTerminating] = useState(false);
-  const [error, setError] = useState(null);
+  const [downloadError, setDownloadError] = useState(null);
 
-  async function confirmTerminate() {
-    setTerminating(true);
-    setError(null);
-
-    let res;
+  // Signed like every other API call (see apiClient), so a plain <a href>
+  // can't be used — fetch the file and hand it to the browser as a blob.
+  async function downloadExport(fmt) {
+    setDownloadError(null);
     try {
-      res = await apiFetch(`${BACKEND_URL}/terminate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          instance_id: record.instance_id,
-          region: record.region,
-          deployment_id: record.deployment_id,
-        }),
-      });
+      const res = await apiFetch(`${BACKEND_URL}/deployments/${record.deployment_id}/export/${fmt}`);
+      if (!res.ok) throw new Error();
+      const url = URL.createObjectURL(await res.blob());
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `feedback-${record.deployment_id}.${fmt}`;
+      link.click();
+      URL.revokeObjectURL(url);
     } catch {
-      setError("Could not reach the backend");
-      setTerminating(false);
-      return;
+      setDownloadError("Could not download the export — it may have been moved or deleted from data/exports/.");
     }
-
-    let data;
-    try {
-      data = await res.json();
-    } catch {
-      data = null;
-    }
-
-    if (!res.ok) {
-      setError(data?.detail || "Terminate failed");
-      setTerminating(false);
-      return;
-    }
-
-    setTerminating(false);
-    setConfirming(false);
-    onChanged();
-    // Tells App.jsx so a CostMonitor showing this same deployment elsewhere
-    // (the Deploy or Feedback stack tab) flips to "terminated" too, instead
-    // of continuing to poll cost-estimate as if it were still running.
-    onTerminated?.(record.deployment_id);
   }
 
   return (
@@ -242,184 +200,194 @@ function DeploymentRow({ record, onChanged, onTerminated }) {
 
       {record.status === "running" && <AccessControl record={record} onChanged={onChanged} />}
 
-      {record.status === "running" && !confirming && (
-        <button type="button" className="terminate-btn" onClick={() => setConfirming(true)}>
-          Terminate
-        </button>
-      )}
-
-      {record.status === "running" && confirming && (
-        <div className="terminate-confirm-row">
-          <span className="terminate-confirm-text">
-            Terminate <strong>{record.instance_name || record.instance_id}</strong>? This deletes the EC2
-            instance — it can't be undone.
-          </span>
-          <div className="terminate-confirm-actions">
-            <button
-              type="button"
-              className="terminate-btn terminate-btn--danger"
-              disabled={terminating}
-              onClick={confirmTerminate}
-            >
-              {terminating ? "Terminating…" : "Confirm terminate"}
+      {record.exports && (
+        <div className="history-access">
+          <div className="history-access-summary">
+            <span>Feedback exported before teardown:</span>
+            <button type="button" className="link-btn" onClick={() => downloadExport("csv")}>
+              Download CSV
             </button>
-            <button type="button" className="link-btn" disabled={terminating} onClick={() => setConfirming(false)}>
-              Cancel
+            <button type="button" className="link-btn" onClick={() => downloadExport("json")}>
+              Download JSON
             </button>
           </div>
-          {error && <p className="terminate-error">{error}</p>}
+          {downloadError && <p className="terminate-error">{downloadError}</p>}
         </div>
+      )}
+
+      {record.status === "running" && (
+        <TerminateControl
+          instanceId={record.instance_id}
+          region={record.region}
+          deploymentId={record.deployment_id}
+          kind={record.kind}
+          displayName={record.instance_name || record.instance_id}
+          label="Terminate"
+          onTerminated={() => {
+            onChanged();
+            // Tells App.jsx so a CostMonitor showing this same deployment elsewhere
+            // (the Deploy or Feedback stack tab) flips to "terminated" too.
+            onTerminated?.(record.deployment_id);
+          }}
+        />
       )}
     </div>
   );
 }
 
-function BucketCleanup({ defaultRegion }) {
-  const [region, setRegion] = useState(defaultRegion);
-  const [regionTouched, setRegionTouched] = useState(false);
-  const [active, setActive] = useState(false);
+const LEFTOVER_KIND_LABELS = {
+  instance: "EC2 instance",
+  security_group: "Security group",
+  secrets: "Secrets",
+  bucket: "S3 bucket",
+};
+
+const leftoverKey = (item) => `${item.kind}:${item.region}:${item.id}`;
+
+function Leftovers({ onChanged }) {
+  const [items, setItems] = useState(null);
+  const [warnings, setWarnings] = useState([]);
+  const [selected, setSelected] = useState(new Set());
+  const [scanning, setScanning] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  const [cleaning, setCleaning] = useState(false);
-  const [result, setResult] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  const [failures, setFailures] = useState([]);
   const [error, setError] = useState(null);
 
-  // Keep the region synced to the most recent feedback deploy once
-  // deployment history actually loads (this mounts before that first fetch
-  // resolves) — but stop overriding it the moment the user picks one.
-  useEffect(() => {
-    if (!regionTouched) setRegion(defaultRegion);
-  }, [defaultRegion, regionTouched]);
-
-  // Polls whether a feedback-stack deploy is currently mid-flight so the
-  // button stays disabled for the whole window it could race one — not
-  // just at the moment it's clicked.
-  useEffect(() => {
-    let cancelled = false;
-    function poll() {
-      apiFetch(`${BACKEND_URL}/deploy-feedback/active`)
-        .then((res) => res.json())
-        .then((data) => {
-          if (!cancelled) setActive(Boolean(data.active));
-        })
-        .catch(() => {});
-    }
-    poll();
-    const interval = setInterval(poll, ACTIVE_POLL_INTERVAL_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, []);
-
-  async function confirmCleanup() {
-    setCleaning(true);
+  async function scan() {
+    setScanning(true);
     setError(null);
-    setResult(null);
-
-    let res;
     try {
-      res = await apiFetch(`${BACKEND_URL}/deploy-feedback/cleanup-bucket`, {
+      const res = await apiFetch(`${BACKEND_URL}/leftovers`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.detail || "Scan failed");
+      setItems(data.items);
+      setWarnings(data.warnings || []);
+      setSelected(new Set());
+    } catch (e) {
+      setError(e.message || "Could not reach the backend");
+    }
+    setScanning(false);
+  }
+
+  function toggle(item) {
+    setSelected((current) => {
+      const next = new Set(current);
+      next.has(leftoverKey(item)) ? next.delete(leftoverKey(item)) : next.add(leftoverKey(item));
+      return next;
+    });
+  }
+
+  async function deleteSelected() {
+    setDeleting(true);
+    setError(null);
+    try {
+      const res = await apiFetch(`${BACKEND_URL}/leftovers/delete`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ region }),
+        body: JSON.stringify({ items: items.filter((item) => selected.has(leftoverKey(item))) }),
       });
-    } catch {
-      setError("Could not reach the backend");
-      setCleaning(false);
-      return;
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.detail || "Delete failed");
+      setFailures(data.filter((r) => !r.ok));
+    } catch (e) {
+      setError(e.message || "Could not reach the backend");
     }
-
-    let data;
-    try {
-      data = await res.json();
-    } catch {
-      data = null;
-    }
-
-    if (!res.ok) {
-      setError(data?.detail || "Cleanup failed");
-      setCleaning(false);
-      return;
-    }
-
-    setResult(data);
-    setCleaning(false);
+    setDeleting(false);
     setConfirming(false);
+    onChanged();
+    await scan();
   }
+
+  const billing = (items || []).filter((item) => item.hourly_usd);
 
   return (
     <section className="form-section">
       <div className="section-heading">
-        <h2 className="section-title">S3 cleanup</h2>
+        <h2 className="section-title">Leftover resources</h2>
         <span className="section-hint">
-          Feedback-stack bundle uploads relay through one S3 bucket per AWS account, normally emptied and left
-          in place after every deploy. Use this if you suspect one was left behind — it deletes the bucket
-          entirely, not just its contents, so nothing keeps quietly costing storage.
+          Scans every region for anything MaidenRun created that no running deployment uses — instances still
+          billing, unattached security groups, old secrets and the S3 relay bucket — so nothing quietly costs money
+          or keeps credentials around.
         </span>
       </div>
 
-      <div className="field-row">
-        <div className="field">
-          <label htmlFor="cleanup_region">Region</label>
-          <select
-            id="cleanup_region"
-            className="input"
-            value={region}
-            onChange={(e) => {
-              setRegion(e.target.value);
-              setRegionTouched(true);
-            }}
-          >
-            {AWS_REGIONS.map((r) => (
-              <option key={r} value={r}>
-                {r}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
+      <button type="button" className="check-btn leftovers-scan-btn" disabled={scanning || deleting} onClick={scan}>
+        {scanning ? "Scanning all regions…" : items ? "Scan again" : "Scan all regions"}
+      </button>
 
-      {!confirming && (
-        <button
-          type="button"
-          className="terminate-btn"
-          disabled={active}
-          title={active ? "A feedback-stack deployment is in progress — try again once it finishes." : undefined}
-          onClick={() => setConfirming(true)}
-        >
-          Delete S3 bucket
-        </button>
+      {error && <p className="terminate-error">{error}</p>}
+      {warnings.map((warning) => (
+        <p key={warning} className="section-hint leftover-warning">
+          ⚠ {warning}
+        </p>
+      ))}
+      {failures.map((f) => (
+        <p key={leftoverKey(f.item)} className="terminate-error">
+          Couldn't delete {f.item.label}: {f.error}
+        </p>
+      ))}
+
+      {items && items.length === 0 && (
+        <p className="field-status field-status--ok">✓ Nothing left over in any region.</p>
       )}
 
-      {confirming && (
-        <div className="terminate-confirm-row">
-          <span className="terminate-confirm-text">
-            Delete the feedback-stack relay bucket in <strong>{region}</strong>, if one exists? This can't be
-            undone — it's recreated automatically the next time you deploy the feedback stack.
-          </span>
-          <div className="terminate-confirm-actions">
+      {items && items.length > 0 && (
+        <>
+          {billing.length > 0 && (
+            <p className="terminate-error">
+              {billing.length} instance{billing.length === 1 ? " is" : "s are"} still billing — about $
+              {billing.reduce((sum, item) => sum + item.hourly_usd, 0).toFixed(4)}/hour.
+            </p>
+          )}
+          <ul className="leftover-list">
+            {items.map((item) => (
+              <li key={leftoverKey(item)}>
+                <label className="leftover-row">
+                  <input type="checkbox" checked={selected.has(leftoverKey(item))} onChange={() => toggle(item)} />
+                  <span className="leftover-kind">{LEFTOVER_KIND_LABELS[item.kind]}</span>
+                  <span className="leftover-label">{item.label}</span>
+                  <span className="leftover-detail">
+                    {item.region} · {item.detail}
+                    {item.hourly_usd ? ` · $${item.hourly_usd.toFixed(4)}/hr` : ""}
+                  </span>
+                </label>
+              </li>
+            ))}
+          </ul>
+
+          {!confirming && (
             <button
               type="button"
-              className="terminate-btn terminate-btn--danger"
-              disabled={cleaning}
-              onClick={confirmCleanup}
+              className="terminate-btn"
+              disabled={selected.size === 0}
+              onClick={() => setConfirming(true)}
             >
-              {cleaning ? "Deleting…" : "Confirm delete"}
+              Delete selected ({selected.size})
             </button>
-            <button type="button" className="link-btn" disabled={cleaning} onClick={() => setConfirming(false)}>
-              Cancel
-            </button>
-          </div>
-          {error && <p className="terminate-error">{error}</p>}
-        </div>
-      )}
-
-      {result && !confirming && (
-        <p className="field-status field-status--ok">
-          {result.existed
-            ? `✓ Deleted bucket ${result.bucket} (${result.objects_deleted} leftover object${result.objects_deleted === 1 ? "" : "s"} removed first).`
-            : `✓ No bucket found for this account/region — nothing to clean up.`}
-        </p>
+          )}
+          {confirming && (
+            <div className="terminate-confirm-row">
+              <span className="terminate-confirm-text">
+                Delete {selected.size} selected resource{selected.size === 1 ? "" : "s"}? Instances are terminated
+                along with their disks. This can't be undone.
+              </span>
+              <div className="terminate-confirm-actions">
+                <button
+                  type="button"
+                  className="terminate-btn terminate-btn--danger"
+                  disabled={deleting}
+                  onClick={deleteSelected}
+                >
+                  {deleting ? "Deleting…" : "Confirm delete"}
+                </button>
+                <button type="button" className="link-btn" disabled={deleting} onClick={() => setConfirming(false)}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+        </>
       )}
     </section>
   );
@@ -447,7 +415,6 @@ export default function DeploymentHistory({ refreshKey, onTerminated }) {
 
   const running = records.filter((r) => r.status === "running");
   const terminated = records.filter((r) => r.status === "terminated");
-  const defaultCleanupRegion = records.find((r) => r.kind === "feedback")?.region || AWS_REGIONS[0];
 
   return (
     <div className="card-wrap">
@@ -489,7 +456,7 @@ export default function DeploymentHistory({ refreshKey, onTerminated }) {
             </section>
           )}
 
-          <BucketCleanup defaultRegion={defaultCleanupRegion} />
+          <Leftovers onChanged={load} />
         </div>
       </div>
     </div>

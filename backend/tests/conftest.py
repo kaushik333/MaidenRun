@@ -13,6 +13,7 @@ def isolated_aws_credentials_path(tmp_path, monkeypatch):
     # Same for deployment history — otherwise every mocked deploy leaves a
     # fake "running" record in the real data/deployments.
     monkeypatch.setattr(settings, "deployments_dir", str(tmp_path / "deployments"))
+    monkeypatch.setattr(settings, "exports_dir", str(tmp_path / "exports"))
     # Never let the AWS credential chain see the developer's real ~/.aws or
     # AWS_* env vars — tests that want a profile set one up explicitly.
     monkeypatch.setattr(settings, "aws_profile", "")

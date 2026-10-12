@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import TerminateControl from "./TerminateControl.jsx";
 import { BACKEND_URL } from "./config";
 import { apiFetch } from "./apiClient";
 
@@ -23,15 +24,14 @@ export default function CostMonitor({
   instanceName,
   region,
   deploymentId,
+  kind,
   onTerminated,
   externallyTerminated,
 }) {
   const [estimate, setEstimate] = useState(null);
   const [now, setNow] = useState(() => Date.now());
   const [terminated, setTerminated] = useState(false);
-  const [confirming, setConfirming] = useState(false);
-  const [terminating, setTerminating] = useState(false);
-  const [error, setError] = useState(null);
+  const [exports, setExports] = useState(null);
 
   // externallyTerminated covers the case where this same deployment was
   // terminated from a different view (the Deployments tab) — this card has
@@ -63,42 +63,9 @@ export default function CostMonitor({
     return () => clearInterval(interval);
   }, [isTerminated]);
 
-  async function confirmTerminate() {
-    setTerminating(true);
-    setError(null);
-
-    let res;
-    try {
-      res = await apiFetch(`${BACKEND_URL}/terminate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ instance_id: instanceId, region, deployment_id: deploymentId }),
-      });
-    } catch {
-      setError("Could not reach the backend");
-      setTerminating(false);
-      return;
-    }
-
-    let data;
-    try {
-      data = await res.json();
-    } catch {
-      setError(`Backend returned an unexpected response (HTTP ${res.status}).`);
-      setTerminating(false);
-      return;
-    }
-
-    if (!res.ok) {
-      const detail = Array.isArray(data?.detail) ? data.detail.map((d) => d.msg.replace(/^Value error, /, "")).join("; ") : data?.detail;
-      setError(detail || "Terminate failed");
-      setTerminating(false);
-      return;
-    }
-
+  function handleTerminated(data) {
     setTerminated(true);
-    setConfirming(false);
-    setTerminating(false);
+    setExports(data?.exports ?? null);
     onTerminated?.(deploymentId);
   }
 
@@ -145,34 +112,19 @@ export default function CostMonitor({
         below is real: it calls AWS and deletes the instance.
       </p>
 
-      {!isTerminated && !confirming && (
-        <button type="button" className="terminate-btn" onClick={() => setConfirming(true)}>
-          Terminate instance
-        </button>
+      {!isTerminated && (
+        <TerminateControl
+          instanceId={instanceId}
+          region={region}
+          deploymentId={deploymentId}
+          kind={kind}
+          displayName={displayName}
+          label="Terminate instance"
+          onTerminated={handleTerminated}
+        />
       )}
 
-      {!isTerminated && confirming && (
-        <div className="terminate-confirm-row">
-          <span className="terminate-confirm-text">
-            Terminate <strong>{displayName}</strong>? This deletes the EC2 instance and its EBS volume —
-            it can't be undone.
-          </span>
-          <div className="terminate-confirm-actions">
-            <button
-              type="button"
-              className="terminate-btn terminate-btn--danger"
-              disabled={terminating}
-              onClick={confirmTerminate}
-            >
-              {terminating ? "Terminating…" : "Confirm terminate"}
-            </button>
-            <button type="button" className="link-btn" disabled={terminating} onClick={() => setConfirming(false)}>
-              Cancel
-            </button>
-          </div>
-          {error && <p className="terminate-error">{error}</p>}
-        </div>
-      )}
+      {exports && <p className="field-status field-status--ok">✓ Feedback saved to {exports.csv} (and .json)</p>}
     </div>
   );
 }

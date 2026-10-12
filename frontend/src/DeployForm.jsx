@@ -602,6 +602,7 @@ export default function DeployForm({
             instanceName={result.instanceName}
             region={result.region}
             deploymentId={result.deploymentId}
+            kind="agent"
             onTerminated={onTerminated}
             externallyTerminated={terminatedIds?.has(result.deploymentId)}
           />

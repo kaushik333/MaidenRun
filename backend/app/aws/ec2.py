@@ -78,6 +78,22 @@ def write_secret_parameters(session: boto3.Session, deployment_id: str, secrets:
     logger.info("wrote %d secret parameter(s) for deployment %s", len(secrets), deployment_id)
 
 
+def delete_secret_parameters(session: boto3.Session, deployment_id: str) -> int:
+    """Deletes every secret written for a deployment (/maidenrun/<id>/*).
+    Listed rather than derived from history, so nothing is ever missed."""
+    ssm = session.client("ssm")
+    pages = ssm.get_paginator("describe_parameters").paginate(
+        ParameterFilters=[
+            {"Key": "Path", "Option": "Recursive", "Values": [f"{PARAMETER_NAMESPACE}/{deployment_id}"]}
+        ]
+    )
+    names = [param["Name"] for page in pages for param in page["Parameters"]]
+    for name in names:
+        ssm.delete_parameter(Name=name)
+    logger.info("deleted %d secret parameter(s) for deployment %s", len(names), deployment_id)
+    return len(names)
+
+
 def get_default_vpc_id(ec2) -> str:
     """Shared by the app and feedback-stack security group setup."""
     default_vpcs = ec2.describe_vpcs(Filters=[{"Name": "isDefault", "Values": ["true"]}])["Vpcs"]

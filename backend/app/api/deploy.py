@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from app.aws.credentials import NoCredentialsError, get_session
 from app.aws.ec2 import (
     REPO_TOKEN_PARAM_NAME,
+    delete_secret_parameters,
     delete_security_group_after_termination,
     ingress_cidrs,
     launch_app_instance,
@@ -22,6 +23,7 @@ from app.aws.pricing import EC2_HOURLY_RATES, estimate_ec2_cost
 from app.core import history
 from app.core.config import settings
 from app.core.errors import classify_error, reraise_as_http_error
+from app.core.exports import export_feedback
 from app.core.logging import logger
 from app.validation.validator import validate_repo
 
@@ -154,10 +156,15 @@ class TerminateRequest(BaseModel):
     # older/other caller that only knows the instance; the instance still
     # terminates either way, it just won't be reflected in history.
     deployment_id: str | None = None
+    # A feedback stack's data is exported before teardown, and teardown stops
+    # (409) if that fails. True = the user chose to terminate anyway.
+    force: bool = False
 
 
 class TerminateResponse(BaseModel):
     status: str
+    # Local paths of the feedback exported before teardown, when there was any.
+    exports: dict[str, str] | None = None
 
 
 # ---- deployment status store ----
@@ -348,6 +355,21 @@ def terminate(request: TerminateRequest, background_tasks: BackgroundTasks) -> T
     # No access key/secret here on purpose — this is exactly the case the local
     # credential cache (Phase 4) exists for: reauthentication for an action after
     # the initial deploy should never require re-pasting the key.
+    record = history.get_deployment(request.deployment_id) if request.deployment_id else None
+
+    # Feedback lives only on the instance's own disk — copy it out first, and
+    # refuse to destroy it silently if that fails.
+    exports = None
+    if record and record.get("kind") == "feedback" and not request.force:
+        try:
+            exports = export_feedback(record)
+        except (OSError, ValueError) as exc:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Couldn't export this deployment's feedback before terminating: {exc}. "
+                "Nothing was deleted — retry, or terminate anyway to delete the feedback without a copy.",
+            ) from exc
+
     try:
         session = get_session(region=request.region)
         terminate_instance(session, request.instance_id)
@@ -357,14 +379,20 @@ def terminate(request: TerminateRequest, background_tasks: BackgroundTasks) -> T
         reraise_as_http_error(exc)
 
     if request.deployment_id:
-        history.mark_terminated(request.deployment_id)
+        history.mark_terminated(request.deployment_id, exports=exports)
+        try:
+            delete_secret_parameters(session, request.deployment_id)
+        except ClientError:
+            # The instance is already gone, so don't fail the request over
+            # this — "Find leftover resources" lists any secrets left behind.
+            logger.exception("could not delete secrets for deployment %s", request.deployment_id)
         # Deployments made before per-deployment security groups share one
         # and have no id recorded — that shared group is left alone.
-        group_id = (history.get_deployment(request.deployment_id) or {}).get("security_group_id")
+        group_id = (record or {}).get("security_group_id")
         if group_id:
             background_tasks.add_task(delete_security_group_after_termination, session, group_id, request.instance_id)
 
-    return TerminateResponse(status="terminating")
+    return TerminateResponse(status="terminating", exports=exports)
 
 
 def resolve_ingress(allowed_ips: list[str]) -> list[str]:

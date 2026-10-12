@@ -1,19 +1,24 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Literal
 
 from botocore.exceptions import ClientError
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
 
-from app.api.deploy import resolve_ingress
+from app.api.deploy import AWS_REGIONS, resolve_ingress
+from app.api.deploy_feedback import has_active_deployment
 from app.aws.credentials import NoCredentialsError, get_session
 from app.aws.ec2 import normalize_allowed_ips, set_security_group_cidrs
 from app.aws.feedback_stack import EBS_SIZE_GB as FEEDBACK_EBS_SIZE_GB
 from app.aws.feedback_stack import INSTANCE_TYPE as FEEDBACK_INSTANCE_TYPE
 from app.aws.pricing import estimate_ec2_cost, estimate_s3_cost
+from app.aws.sweep import delete_leftover, scan_bucket, scan_region
 from app.core import history
 from app.core.config import settings
-from app.core.errors import reraise_as_http_error
+from app.core.errors import classify_error, reraise_as_http_error
 from app.core.logging import logger
 
 router = APIRouter()
@@ -37,6 +42,8 @@ class DeploymentRecord(BaseModel):
     # editable IP allowlist) — older ones share one and have none recorded.
     security_group_id: str | None = None
     links: list[DeploymentLink]
+    # Local paths of the feedback exported right before teardown.
+    exports: dict[str, str] | None = None
     decisions: dict[str, Any] = {}
     cost_estimate_usd: float | None = None
 
@@ -129,3 +136,84 @@ def update_allowed_ips(deployment_id: str, request: AllowedIpsRequest) -> Deploy
     record = DeploymentRecord(**raw)
     record.cost_estimate_usd = _compute_cost(raw)
     return record
+
+
+@router.get("/deployments/{deployment_id}/export/{fmt}")
+def download_export(deployment_id: str, fmt: Literal["csv", "json"]) -> FileResponse:
+    """The feedback saved locally when this feedback stack was torn down."""
+    path = ((history.get_deployment(deployment_id) or {}).get("exports") or {}).get(fmt)
+    if not path or not Path(path).is_file():
+        raise HTTPException(status_code=404, detail="No saved export for this deployment")
+    return FileResponse(path, filename=Path(path).name)
+
+
+LeftoverKind = Literal["instance", "security_group", "secrets", "bucket"]
+
+
+class LeftoverItem(BaseModel):
+    kind: LeftoverKind
+    region: str
+    id: str
+    label: str = ""
+    detail: str = ""
+    hourly_usd: float | None = None
+    deployment_id: str | None = None
+
+
+class LeftoversResponse(BaseModel):
+    items: list[LeftoverItem]
+    warnings: list[str] = []
+
+
+class DeleteLeftoversRequest(BaseModel):
+    items: list[LeftoverItem]
+
+
+class DeleteResult(BaseModel):
+    item: LeftoverItem
+    ok: bool
+    error: str | None = None
+
+
+@router.get("/leftovers", response_model=LeftoversResponse)
+def find_leftovers() -> LeftoversResponse:
+    """Everything this platform created, in every supported region, that
+    belongs to no running deployment — instances still billing, plus
+    security groups, secrets and the relay bucket that outlived theirs."""
+    running_ids = {r["deployment_id"] for r in history.list_deployments() if r.get("status") == "running"}
+    try:
+        sessions = [get_session(region=region) for region in AWS_REGIONS]
+        with ThreadPoolExecutor(max_workers=len(sessions)) as pool:
+            warnings: set[str] = set()
+            per_region = list(pool.map(lambda session: scan_region(session, running_ids, warnings), sessions))
+        items = [item for region_items in per_region for item in region_items] + scan_bucket(sessions[0])
+    except NoCredentialsError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except ClientError as exc:
+        reraise_as_http_error(exc)
+    return LeftoversResponse(items=items, warnings=sorted(warnings))
+
+
+@router.post("/leftovers/delete", response_model=list[DeleteResult])
+def delete_leftovers(request: DeleteLeftoversRequest) -> list[DeleteResult]:
+    """Deletes each selected item independently, reporting per-item results —
+    one failure (e.g. a security group whose instance is still shutting
+    down) never blocks the rest."""
+    results = []
+    for item in request.items:
+        if item.kind == "bucket" and has_active_deployment():
+            error = "A feedback-stack deploy is in progress — retry later"
+            results.append(DeleteResult(item=item, ok=False, error=error))
+            continue
+        try:
+            delete_leftover(get_session(region=item.region), item.kind, item.id)
+        except NoCredentialsError as exc:
+            raise HTTPException(status_code=401, detail=str(exc)) from exc
+        except ClientError as exc:
+            # Same wording as everywhere else, e.g. an outdated IAM policy says how to fix it.
+            results.append(DeleteResult(item=item, ok=False, error=classify_error(exc)[1]))
+            continue
+        if item.kind == "instance" and item.deployment_id and history.get_deployment(item.deployment_id):
+            history.mark_terminated(item.deployment_id)
+        results.append(DeleteResult(item=item, ok=True))
+    return results

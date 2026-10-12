@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     # durable, file-per-deployment history (see app/core/history.py) —
     # bind-mounted so it survives container rebuilds, not just restarts
     deployments_dir: str = "data/deployments"
+    # feedback exported right before a feedback stack is torn down
+    exports_dir: str = "data/exports"
 
     # aws
     aws_default_region: str = "us-east-1"

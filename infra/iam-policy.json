@@ -44,6 +44,12 @@
       "Resource": "arn:aws:ssm:*:*:parameter/maidenrun/*"
     },
     {
+      "Sid": "SecretParameterList",
+      "Effect": "Allow",
+      "Action": "ssm:DescribeParameters",
+      "Resource": "*"
+    },
+    {
       "Sid": "PassInstanceRole",
       "Effect": "Allow",
       "Action": "iam:PassRole",
@@ -58,7 +64,7 @@
     {
       "Sid": "FeedbackBundleBucket",
       "Effect": "Allow",
-      "Action": ["s3:CreateBucket", "s3:ListBucket", "s3:PutLifecycleConfiguration"],
+      "Action": ["s3:CreateBucket", "s3:DeleteBucket", "s3:ListBucket", "s3:PutLifecycleConfiguration"],
       "Resource": "arn:aws:s3:::maidenrun-*"
     },
     {

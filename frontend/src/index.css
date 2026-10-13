@@ -1192,6 +1192,38 @@ body {
   color: var(--color-text);
 }
 
+/* ---- redeploy (Deployments tab, agent rows) ---- */
+.redeploy-btn {
+  align-self: flex-start;
+  padding: 0.5rem 1rem;
+}
+
+.redeploy-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--color-primary-soft-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-primary-soft);
+}
+
+.redeploy-confirm-text {
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--color-text);
+}
+
+.redeploy-confirm .check-btn {
+  padding: 0.5rem 1rem;
+}
+
+.redeploy-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
 /* ---- questionnaire versions panel (Deployments tab, feedback stacks) ---- */
 .questionnaire-body {
   display: flex;

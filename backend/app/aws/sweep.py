@@ -1,13 +1,16 @@
 import boto3
 from botocore.exceptions import ClientError
 
-from app.aws.ec2 import PARAMETER_NAMESPACE, delete_secret_parameters, terminate_instance
-from app.aws.pricing import EC2_HOURLY_RATES
+from app.aws.ec2 import PARAMETER_NAMESPACE, delete_secret_parameters, release_address, terminate_instance
+from app.aws.pricing import PUBLIC_IPV4_HOURLY, instance_hourly_rate
 from app.aws.s3_bundle import BUCKET_NAME_PREFIX, cleanup_bundle_bucket
 from app.core.logging import logger
 
-# Every resource this platform creates carries one of these: instances and
-# security groups a deployment_id tag / maidenrun-* name, secrets the
+# AWS bills a fixed address whether or not anything uses it.
+ADDRESS_HOURLY_USD = PUBLIC_IPV4_HOURLY
+
+# Every resource this platform creates carries one of these: instances, fixed
+# addresses and security groups a deployment_id tag / maidenrun-* name, secrets the
 # /maidenrun/<deployment_id>/ path. That's what lets a sweep find anything the
 # control plane lost track of (a crash mid-deploy, a deleted data/ folder, a
 # region nobody is looking at).
@@ -44,7 +47,23 @@ def scan_region(session: boto3.Session, running_ids: set[str], warnings: set[str
             "deployment_id": tags.get("deployment_id"),
             "label": tags.get("Name", instance["InstanceId"]),
             "detail": f"{instance['InstanceType']}, {instance['State']['Name']}",
-            "hourly_usd": EC2_HOURLY_RATES.get(instance["InstanceType"]),
+            "hourly_usd": instance_hourly_rate(instance["InstanceType"]),
+        })
+
+    addresses = ec2.describe_addresses(Filters=[{"Name": "tag-key", "Values": ["deployment_id"]}])["Addresses"]
+    for address in addresses:
+        tags = {tag["Key"]: tag["Value"] for tag in address.get("Tags", [])}
+        attached = bool(address.get("AssociationId"))
+        if attached and tags.get("deployment_id") in running_ids:
+            continue
+        items.append({
+            "kind": "address",
+            "region": region,
+            "id": address["AllocationId"],
+            "deployment_id": tags.get("deployment_id"),
+            "label": f"{address['PublicIp']} (fixed address)",
+            "detail": "attached to a leftover instance" if attached else "not attached to anything",
+            "hourly_usd": ADDRESS_HOURLY_USD,
         })
 
     # A group is in use only while some live platform instance references it.
@@ -114,6 +133,8 @@ def delete_leftover(session: boto3.Session, kind: str, resource_id: str) -> None
     """Deletes one item returned by a scan. Raises ClientError on failure."""
     if kind == "instance":
         terminate_instance(session, resource_id)
+    elif kind == "address":
+        release_address(session, resource_id)
     elif kind == "security_group":
         session.client("ec2").delete_security_group(GroupId=resource_id)
     elif kind == "secrets":

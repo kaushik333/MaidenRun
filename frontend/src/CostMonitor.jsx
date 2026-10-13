@@ -107,9 +107,10 @@ export default function CostMonitor({
       </div>
 
       <p className="cost-monitor-note">
-        Estimated from the real AWS launch time ({estimate.instance_type} @ ${estimate.hourly_rate.toFixed(4)}/hr
-        + EBS storage){hasS3 ? " — the S3 figure stops growing once the relay bundle is deleted" : ""}. Terminate
-        below is real: it calls AWS and deletes the instance.
+        Estimated from the real AWS launch time ({estimate.instance_type} with its public IPv4 address
+        @ ${estimate.hourly_rate.toFixed(4)}/hr + EBS storage), counting every redeploy since the first deploy
+        {hasS3 ? " — the S3 figure stops growing once the relay bundle is deleted" : ""}. Terminate below is real: it
+        calls AWS and deletes the instance.
       </p>
 
       {!isTerminated && (

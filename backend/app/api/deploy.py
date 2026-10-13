@@ -11,15 +11,19 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from app.aws.credentials import NoCredentialsError, get_session
 from app.aws.ec2 import (
     REPO_TOKEN_PARAM_NAME,
+    address_ip,
+    allocate_address,
     delete_secret_parameters,
     delete_security_group_after_termination,
     ingress_cidrs,
     launch_app_instance,
+    move_address,
     normalize_allowed_ips,
+    release_address,
     terminate_instance,
     wait_for_port_health,
 )
-from app.aws.pricing import EC2_HOURLY_RATES, estimate_ec2_cost
+from app.aws.pricing import deployment_cost, estimate_ec2_cost, instance_hourly_rate
 from app.core import history
 from app.core.config import settings
 from app.core.errors import classify_error, reraise_as_http_error
@@ -211,6 +215,7 @@ def _run_deployment(
     frontend to ever observe.
     """
     app_result = None
+    allocation_id = None
     try:
         _set_step(deployment_id, "app_compute", "active")
         app_result = launch_app_instance(
@@ -226,16 +231,18 @@ def _run_deployment(
             ingress=ingress,
             commit_sha=validation.commit_sha,
         )
+        # The fixed address this agent keeps for life — redeploys move it to
+        # the new instance, so the URL never changes.
+        allocation_id, public_ip = allocate_address(app_session, deployment_id)
+        move_address(app_session, allocation_id, app_result["instance_id"])
         launched_at = datetime.now(UTC)
         _set_step(deployment_id, "app_compute", "done")
 
         _set_step(deployment_id, "app_health", "active")
-        wait_for_port_health(
-            app_result["public_ip"], settings.app_port, timeout_seconds=settings.app_health_timeout_seconds
-        )
+        wait_for_port_health(public_ip, settings.app_port, timeout_seconds=settings.app_health_timeout_seconds)
         _set_step(deployment_id, "app_health", "done")
 
-        app_url = f"http://{app_result['public_ip']}:{settings.app_port}"
+        app_url = f"http://{public_ip}:{settings.app_port}"
         with _deployments_lock:
             _deployments[deployment_id].result = DeployResult(
                 app_url=app_url,
@@ -254,6 +261,7 @@ def _run_deployment(
             "region": request.aws.region,
             "instance_id": app_result["instance_id"],
             "security_group_id": app_result["security_group_id"],
+            "allocation_id": allocation_id,
             "instance_name": request.instance_name,
             "links": [{"label": "Agent UI", "url": app_url}],
             "decisions": {
@@ -298,6 +306,11 @@ def _run_deployment(
                 rollback_note = (
                     f" (could not confirm rollback of {app_result['instance_id']} — check the AWS console)"
                 )
+        if allocation_id:
+            try:
+                release_address(app_session, allocation_id)
+            except Exception:
+                logger.exception("rollback: failed to release address %s", allocation_id)
 
         _, message = classify_error(exc)
         with _deployments_lock:
@@ -350,9 +363,13 @@ def deploy_cost_estimate(deployment_id: str) -> CostEstimate:
     if status is None or status.result is None:
         raise HTTPException(status_code=404, detail="Unknown or not-yet-complete deployment_id")
     result = status.result
+    record = history.get_deployment(deployment_id)
     return CostEstimate(
-        estimated_usd=estimate_ec2_cost(result.instance_type, result.ebs_size_gb, result.launched_at),
-        hourly_rate=EC2_HOURLY_RATES.get(result.instance_type, 0.0),
+        # Same total as the Deployments tab: from the first deploy, across redeploys.
+        estimated_usd=deployment_cost(record) if record else estimate_ec2_cost(
+            result.instance_type, result.ebs_size_gb, result.launched_at
+        ),
+        hourly_rate=instance_hourly_rate(result.instance_type),
         instance_type=result.instance_type,
         launched_at=result.launched_at,
     )
@@ -364,6 +381,10 @@ def terminate(request: TerminateRequest, background_tasks: BackgroundTasks) -> T
     # credential cache (Phase 4) exists for: reauthentication for an action after
     # the initial deploy should never require re-pasting the key.
     record = history.get_deployment(request.deployment_id) if request.deployment_id else None
+    with _deployments_lock:
+        if request.deployment_id in _redeploying:
+            detail = "A redeploy of this agent is in progress — wait for it to finish, then terminate."
+            raise HTTPException(status_code=409, detail=detail)
 
     # Feedback lives only on the instance's own disk — copy it out first, and
     # refuse to destroy it silently if that fails.
@@ -378,9 +399,12 @@ def terminate(request: TerminateRequest, background_tasks: BackgroundTasks) -> T
                 "Nothing was deleted — retry, or terminate anyway to delete the feedback without a copy.",
             ) from exc
 
+    # History is authoritative for which instance a deployment runs on right
+    # now — after a redeploy, a page opened earlier still holds the old id.
+    instance_id = record["instance_id"] if record else request.instance_id
     try:
         session = get_session(region=request.region)
-        terminate_instance(session, request.instance_id)
+        terminate_instance(session, instance_id)
     except NoCredentialsError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     except ClientError as exc:
@@ -388,6 +412,12 @@ def terminate(request: TerminateRequest, background_tasks: BackgroundTasks) -> T
 
     if request.deployment_id:
         history.mark_terminated(request.deployment_id, exports=exports)
+        allocation_id = (record or {}).get("allocation_id")
+        if allocation_id:
+            try:
+                release_address(session, allocation_id)  # an unattached address keeps billing
+            except ClientError:
+                logger.exception("could not release address %s — the leftover sweep lists it", allocation_id)
         try:
             delete_secret_parameters(session, request.deployment_id)
         except ClientError:
@@ -398,9 +428,193 @@ def terminate(request: TerminateRequest, background_tasks: BackgroundTasks) -> T
         # and have no id recorded — that shared group is left alone.
         group_id = (record or {}).get("security_group_id")
         if group_id:
-            background_tasks.add_task(delete_security_group_after_termination, session, group_id, request.instance_id)
+            background_tasks.add_task(delete_security_group_after_termination, session, group_id, instance_id)
 
     return TerminateResponse(status="terminating", exports=exports)
+
+
+# ---- redeploy: a new commit at the same URL ----
+
+REDEPLOY_STEP_IDS = ("app_compute", "app_health", "switch")
+# Agent deployments with a redeploy in flight (guarded by _deployments_lock) —
+# two at once would race for the same fixed address.
+_redeploying: set[str] = set()
+
+
+class RedeployRequest(BaseModel):
+    # Only needed for a private repo: the control plane deliberately can't read
+    # the stored token back, and needs one to validate the new commit.
+    github_token: str | None = None
+
+
+def _secret_names(decisions: dict) -> list[str]:
+    names = [decisions.get("api_key_name"), decisions.get("base_url_name"), *(decisions.get("env_var_keys") or [])]
+    return [name for name in names if name]
+
+
+@router.post("/deployments/{deployment_id}/redeploy", response_model=DeployAcceptedResponse, status_code=202)
+def redeploy(deployment_id: str, request: RedeployRequest, background_tasks: BackgroundTasks) -> DeployAcceptedResponse:
+    """Deploys the latest commit of a running agent's repo — same settings,
+    same secrets, same URL. The new instance is health-checked while the old
+    one keeps serving; only then does the agent's fixed address move over.
+    Returns an id to poll at /deploy/<id>/status."""
+    record = history.get_deployment(deployment_id)
+    if record is None or record.get("kind") != "agent":
+        raise HTTPException(status_code=404, detail="Unknown agent deployment")
+    if record.get("status") != "running":
+        raise HTTPException(status_code=409, detail="This agent has been terminated — deploy it again instead")
+    decisions = record.get("decisions") or {}
+
+    validation = validate_repo(decisions["repo_url"], request.github_token)
+    if not validation.valid:
+        raise HTTPException(status_code=400, detail=validation.error)
+    try:
+        session = get_session(region=record["region"])
+    except NoCredentialsError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    # Only used when an older deployment without its own security group gets one now.
+    ingress = resolve_ingress(decisions.get("allowed_ips") or [])
+
+    with _deployments_lock:
+        if deployment_id in _redeploying:
+            raise HTTPException(status_code=409, detail="A redeploy of this agent is already in progress")
+        _redeploying.add(deployment_id)
+        redeploy_id = uuid.uuid4().hex[:12]
+        _deployments[redeploy_id] = DeploymentStatus(steps=dict.fromkeys(REDEPLOY_STEP_IDS, "pending"))
+
+    background_tasks.add_task(
+        _run_redeploy, redeploy_id, session, record, validation, request.github_token, ingress
+    )
+    return DeployAcceptedResponse(deployment_id=redeploy_id)
+
+
+def _run_redeploy(
+    redeploy_id: str,
+    session,
+    record: dict,
+    validation: ValidateRepoResponse,
+    github_token: str | None,
+    ingress: list[str],
+) -> None:
+    """Blue/green: launch the new commit beside the running one, wait until it
+    answers, move the fixed address onto it, then terminate the old instance.
+    Any failure before the move leaves the old version serving untouched."""
+    deployment_id = record["deployment_id"]
+    decisions = record["decisions"]
+    new = None
+    allocated_here = None
+    extra_started = None  # when the second instance started billing alongside the first
+    try:
+        _set_step(redeploy_id, "app_compute", "active")
+        new = launch_app_instance(
+            session,
+            deployment_id=deployment_id,
+            repo_url=decisions["repo_url"],
+            entry_point=validation.entry_point,
+            instance_type=decisions["instance_type"],
+            ebs_size_gb=decisions["ebs_size_gb"],
+            secrets={},
+            existing_secret_names=_secret_names(decisions),
+            instance_name=record.get("instance_name"),
+            github_token=github_token,
+            ingress=ingress,
+            commit_sha=validation.commit_sha,
+            security_group_id=record.get("security_group_id"),
+        )
+        extra_started = datetime.now(UTC)
+        _set_step(redeploy_id, "app_compute", "done")
+
+        # Checked on the new instance's own temporary address — reviewers are
+        # still on the old one via the fixed address.
+        _set_step(redeploy_id, "app_health", "active")
+        wait_for_port_health(new["public_ip"], settings.app_port, timeout_seconds=settings.app_health_timeout_seconds)
+        _set_step(redeploy_id, "app_health", "done")
+
+        _set_step(redeploy_id, "switch", "active")
+        allocation_id = record.get("allocation_id")
+        if allocation_id:
+            public_ip = address_ip(session, allocation_id)
+        else:  # deployed before fixed addresses: its URL changes this one time
+            allocation_id, public_ip = allocated_here = allocate_address(session, deployment_id)
+        move_address(session, allocation_id, new["instance_id"])
+        old_instance_id = record["instance_id"]
+        terminate_instance(session, old_instance_id)
+        _set_step(redeploy_id, "switch", "done")
+
+        now = datetime.now(UTC)
+        app_url = f"http://{public_ip}:{settings.app_port}"
+        # Both instances billed from the new one's launch until the old one stopped.
+        record.setdefault("extra_runs", []).append(
+            {"started_at": extra_started.isoformat(), "ended_at": now.isoformat(), "outcome": "redeployed"}
+        )
+        record.setdefault("revisions", []).append({
+            "commit_sha": decisions.get("commit_sha"),
+            "commit_message": decisions.get("commit_message"),
+            "instance_id": old_instance_id,
+            "replaced_at": now.isoformat(),
+        })
+        record.update(
+            instance_id=new["instance_id"],
+            security_group_id=new["security_group_id"],
+            allocation_id=allocation_id,
+            links=[{"label": "Agent UI", "url": app_url}],
+        )
+        decisions.update(
+            commit_sha=validation.commit_sha, commit_message=validation.commit_message, redeployed_at=now.isoformat()
+        )
+        history.record_deployment(record)
+
+        result = DeployResult(
+            app_url=app_url,
+            app_instance_id=new["instance_id"],
+            instance_type=decisions["instance_type"],
+            ebs_size_gb=decisions["ebs_size_gb"],
+            launched_at=now,
+        )
+        with _deployments_lock:
+            _deployments[redeploy_id].result = result
+            if deployment_id in _deployments and _deployments[deployment_id].result:
+                # So the original deploy's cost monitor follows the new instance.
+                _deployments[deployment_id].result.app_instance_id = new["instance_id"]
+                _deployments[deployment_id].result.app_url = app_url
+        if validation.commit_sha:
+            announce_agent_version(decisions["repo_url"], validation.commit_sha, validation.commit_message or "")
+    except Exception as exc:  # deliberately broad — terminal handler for the whole background flow
+        logger.exception("redeploy %s of %s failed", redeploy_id, deployment_id)
+        with _deployments_lock:
+            status = _deployments[redeploy_id]
+            active_step = next((s for s in REDEPLOY_STEP_IDS if status.steps[s] == "active"), None)
+            if active_step:
+                status.steps[active_step] = "error"
+        _, message = classify_error(exc)
+        with _deployments_lock:
+            _deployments[redeploy_id].error = f"{message.rstrip('.')}. The previous version is still serving."
+        # Roll back only what this redeploy created — the old instance and the
+        # fixed address it serves on stay exactly as they were.
+        if new:
+            try:
+                terminate_instance(session, new["instance_id"])
+                # The failed attempt still billed while it ran — add it to the deployment's total.
+                current = history.get_deployment(deployment_id)
+                if current and extra_started:
+                    current.setdefault("extra_runs", []).append({
+                        "started_at": extra_started.isoformat(),
+                        "ended_at": datetime.now(UTC).isoformat(),
+                        "outcome": "failed",
+                    })
+                    history.record_deployment(current)
+                if not record.get("security_group_id"):
+                    delete_security_group_after_termination(session, new["security_group_id"], new["instance_id"])
+            except Exception:
+                logger.exception("rollback: failed to remove new instance %s", new["instance_id"])
+        if allocated_here:
+            try:
+                release_address(session, allocated_here[0])
+            except Exception:
+                logger.exception("rollback: failed to release address %s", allocated_here[0])
+    finally:
+        with _deployments_lock:
+            _redeploying.discard(deployment_id)
 
 
 def resolve_ingress(allowed_ips: list[str]) -> list[str]:

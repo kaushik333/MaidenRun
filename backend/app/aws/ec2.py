@@ -70,12 +70,17 @@ def write_secret_parameters(session: boto3.Session, deployment_id: str, secrets:
     """
     ssm = session.client("ssm")
     for name, value in secrets.items():
-        ssm.put_parameter(
-            Name=f"{PARAMETER_NAMESPACE}/{deployment_id}/{name}",
-            Value=value,
-            Type="SecureString",
-            Tags=[{"Key": "deployment_id", "Value": deployment_id}],
-        )
+        param = f"{PARAMETER_NAMESPACE}/{deployment_id}/{name}"
+        try:
+            ssm.put_parameter(
+                Name=param, Value=value, Type="SecureString", Tags=[{"Key": "deployment_id", "Value": deployment_id}]
+            )
+        except ClientError as exc:
+            # A redeploy replacing a value (e.g. a rotated GitHub token) —
+            # AWS refuses Tags together with Overwrite, and it's tagged already.
+            if exc.response["Error"]["Code"] != "ParameterAlreadyExists":
+                raise
+            ssm.put_parameter(Name=param, Value=value, Type="SecureString", Overwrite=True)
     logger.info("wrote %d secret parameter(s) for deployment %s", len(secrets), deployment_id)
 
 
@@ -356,9 +361,15 @@ def launch_app_instance(
     github_token: str | None = None,
     ingress: list[str] = (OPEN_CIDR,),
     commit_sha: str | None = None,
+    existing_secret_names: list[str] = (),
+    security_group_id: str | None = None,
 ) -> dict:
     """Provisions the app EC2 instance and returns {"instance_id", "public_ip",
     "security_group_id"}. `ingress` is the CIDR list from ingress_cidrs().
+
+    A redeploy reuses the deployment's secrets already in SSM
+    (`existing_secret_names`, not rewritten) and its security group
+    (`security_group_id`, so the allowlist carries over) instead of creating new ones.
 
     Note: this returns as soon as AWS assigns a public IP (seconds), not
     once the agent itself is actually serving :8001 — Docker install +
@@ -375,21 +386,23 @@ def launch_app_instance(
     user_data = render_user_data(
         repo_url=repo_url,
         entry_point=entry_point,
-        secret_names=list(secrets.keys()),
+        secret_names=[*secrets.keys(), *existing_secret_names],
         deployment_id=deployment_id,
         region=session.region_name,
         needs_repo_token=bool(github_token),
         commit_sha=commit_sha,
     )
 
-    security_group_id = create_security_group(
-        session,
-        name=f"{SECURITY_GROUP_NAME}-{deployment_id}",
-        description=f"MaidenRun: app instance {deployment_id}, port {settings.app_port}",
-        ports=[settings.app_port],
-        cidrs=list(ingress),
-        deployment_id=deployment_id,
-    )
+    new_group = security_group_id is None
+    if new_group:
+        security_group_id = create_security_group(
+            session,
+            name=f"{SECURITY_GROUP_NAME}-{deployment_id}",
+            description=f"MaidenRun: app instance {deployment_id}, port {settings.app_port}",
+            ports=[settings.app_port],
+            cidrs=list(ingress),
+            deployment_id=deployment_id,
+        )
     ec2 = session.client("ec2")
     try:
         response = ec2.run_instances(
@@ -416,13 +429,69 @@ def launch_app_instance(
             ],
         )
     except Exception:
-        ec2.delete_security_group(GroupId=security_group_id)  # no instance, so nothing else would clean it up
+        if new_group:
+            ec2.delete_security_group(GroupId=security_group_id)  # no instance, so nothing else would clean it up
         raise
     instance_id = response["Instances"][0]["InstanceId"]
     logger.info("launched app instance %s for deployment %s", instance_id, deployment_id)
 
     public_ip = wait_for_public_ip(ec2, instance_id)
     return {"instance_id": instance_id, "public_ip": public_ip, "security_group_id": security_group_id}
+
+
+# ---- fixed addresses (Elastic IPs) ----
+# Each agent deployment keeps one public address for its whole life, so its
+# URL survives redeploys: a new instance is launched, health-checked, and only
+# then is the address moved onto it. Same price as the public IP an instance
+# gets anyway ($0.005/hr) while attached — but an unattached one still bills,
+# so teardown releases it and the leftover sweep flags any that are left.
+
+
+def allocate_address(session: boto3.Session, deployment_id: str) -> tuple[str, str]:
+    """Returns (allocation_id, public_ip)."""
+    response = session.client("ec2").allocate_address(
+        Domain="vpc",
+        TagSpecifications=[
+            {
+                "ResourceType": "elastic-ip",
+                "Tags": [
+                    {"Key": "deployment_id", "Value": deployment_id},
+                    {"Key": "Name", "Value": f"maidenrun-{deployment_id}"},
+                ],
+            }
+        ],
+    )
+    logger.info("allocated address %s for deployment %s", response["PublicIp"], deployment_id)
+    return response["AllocationId"], response["PublicIp"]
+
+
+def address_ip(session: boto3.Session, allocation_id: str) -> str:
+    return session.client("ec2").describe_addresses(AllocationIds=[allocation_id])["Addresses"][0]["PublicIp"]
+
+
+def move_address(session: boto3.Session, allocation_id: str, instance_id: str) -> None:
+    """Points the address at `instance_id` (taking it off any other instance) —
+    the moment the URL switches over. The instance must be running first."""
+    ec2 = session.client("ec2")
+    ec2.get_waiter("instance_running").wait(InstanceIds=[instance_id])
+    ec2.associate_address(AllocationId=allocation_id, InstanceId=instance_id, AllowReassociation=True)
+    logger.info("moved address %s to instance %s", allocation_id, instance_id)
+
+
+def release_address(session: boto3.Session, allocation_id: str) -> None:
+    """Detaches (if still attached) and releases the address, so it stops
+    billing. Already gone counts as done."""
+    ec2 = session.client("ec2")
+    try:
+        address = ec2.describe_addresses(AllocationIds=[allocation_id])["Addresses"][0]
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] == "InvalidAllocationID.NotFound":
+            return
+        raise
+    if address.get("AssociationId"):
+        ec2.disassociate_address(AssociationId=address["AssociationId"])
+    ec2.release_address(AllocationId=allocation_id)
+    logger.info("released address %s", allocation_id)
 
 
 def terminate_instance(session: boto3.Session, instance_id: str) -> None:

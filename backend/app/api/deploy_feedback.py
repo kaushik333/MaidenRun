@@ -17,7 +17,7 @@ from app.aws.ec2 import (
     wait_for_port_health,
 )
 from app.aws.feedback_stack import EBS_SIZE_GB, INSTANCE_TYPE, launch_feedback_stack
-from app.aws.pricing import EC2_HOURLY_RATES, estimate_ec2_cost, estimate_s3_cost
+from app.aws.pricing import estimate_ec2_cost, estimate_s3_cost, instance_hourly_rate
 from app.aws.s3_bundle import (
     BUNDLE_KEY_PREFIX,
     build_bundle,
@@ -324,7 +324,7 @@ def deploy_feedback_cost_estimate(deployment_id: str) -> FeedbackCostEstimate:
         s3_estimated_usd=estimate_s3_cost(
             result.bundle_size_bytes, result.bundle_uploaded_at, result.bundle_deleted_at
         ),
-        hourly_rate=EC2_HOURLY_RATES.get(INSTANCE_TYPE, 0.0),
+        hourly_rate=instance_hourly_rate(INSTANCE_TYPE),
         instance_type=INSTANCE_TYPE,
         launched_at=result.launched_at,
     )

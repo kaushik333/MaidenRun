@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { BACKEND_URL } from "./config";
 import { apiFetch } from "./apiClient";
 import AllowedIpsField, { parseAllowedIps } from "./AllowedIpsField.jsx";
+import DeploySteps from "./DeploySteps.jsx";
+import PasswordField from "./PasswordField.jsx";
 import TerminateControl from "./TerminateControl.jsx";
 
 const DECISION_LABELS = {
@@ -342,6 +344,130 @@ function AccessControl({ record, onChanged }) {
   );
 }
 
+const REDEPLOY_STEPS = [
+  ["app_compute", "Launch the new version beside the current one"],
+  ["app_health", "Wait for it to answer"],
+  ["switch", "Move the agent's address over and retire the old version"],
+];
+
+// Redeploys the latest commit of a running agent at the same URL: the
+// current version keeps serving until the new one is healthy, and a failed
+// redeploy never touches it (see _run_redeploy on the backend).
+function RedeployControl({ record, onChanged }) {
+  const [confirming, setConfirming] = useState(false);
+  const [token, setToken] = useState("");
+  const [redeployId, setRedeployId] = useState(null);
+  const [status, setStatus] = useState(null);
+  const [error, setError] = useState(null);
+  const inProgress = redeployId && !status?.result && !status?.error;
+  const decisions = record.decisions || {};
+
+  useEffect(() => {
+    if (!redeployId) return undefined;
+    let stopped = false;
+    async function poll() {
+      try {
+        const next = await apiJson(`${BACKEND_URL}/deploy/${redeployId}/status`);
+        if (stopped) return;
+        setStatus(next);
+        if (next.result) onChanged(); // history now shows the new commit
+        if (next.result || next.error) stopped = true;
+      } catch {
+        // transient — try again on the next tick
+      }
+    }
+    poll();
+    const interval = setInterval(() => !stopped && poll(), 3000);
+    return () => {
+      stopped = true;
+      clearInterval(interval);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [redeployId]);
+
+  async function start() {
+    setError(null);
+    setStatus(null);
+    try {
+      const data = await apiJson(`${BACKEND_URL}/deployments/${record.deployment_id}/redeploy`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ github_token: token.trim() || null }),
+      });
+      setConfirming(false);
+      setToken("");
+      setRedeployId(data.deployment_id);
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  if (redeployId) {
+    const steps = REDEPLOY_STEPS.map(([id, label]) => ({
+      id,
+      label,
+      status: status?.steps[id] ?? "pending",
+      errorMessage: status?.steps[id] === "error" ? status.error : null,
+    }));
+    return (
+      <div className="redeploy-progress">
+        <DeploySteps steps={steps} />
+        {status?.result && (
+          <p className="field-status field-status--ok">
+            ✓ Now running the latest commit at {status.result.app_url}
+            {!record.allocation_id && " — this agent's permanent address from now on"}.
+          </p>
+        )}
+        {!inProgress && (
+          <button type="button" className="link-btn" onClick={() => setRedeployId(null)}>
+            Done
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  if (!confirming) {
+    return (
+      <button type="button" className="check-btn redeploy-btn" onClick={() => setConfirming(true)}>
+        Redeploy latest commit
+      </button>
+    );
+  }
+
+  return (
+    <div className="redeploy-confirm">
+      <span className="redeploy-confirm-text">
+        Redeploy <strong>{record.instance_name || record.instance_id}</strong> with the latest commit on{" "}
+        <strong>{shortRepo(decisions.repo_url || "")}</strong>, same settings and secrets? The current version keeps
+        serving until the new one answers, then the URL switches over — if the new one fails, nothing changes.
+        {!record.allocation_id &&
+          " This agent was deployed before permanent addresses: this redeploy gives it one, so its URL changes this one time."}
+      </span>
+      {decisions.private_repo && (
+        <div className="field">
+          <label htmlFor={`redeploy_token_${record.deployment_id}`}>GitHub token (private repo)</label>
+          <PasswordField
+            id={`redeploy_token_${record.deployment_id}`}
+            placeholder="Needed to read the new commit"
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+          />
+        </div>
+      )}
+      <div className="terminate-confirm-actions">
+        <button type="button" className="check-btn" onClick={start}>
+          Redeploy
+        </button>
+        <button type="button" className="link-btn" onClick={() => setConfirming(false)}>
+          Cancel
+        </button>
+      </div>
+      {error && <p className="terminate-error">{error}</p>}
+    </div>
+  );
+}
+
 function DeploymentRow({ record, records, onChanged, onTerminated }) {
   const [downloadError, setDownloadError] = useState(null);
 
@@ -442,6 +568,10 @@ function DeploymentRow({ record, records, onChanged, onTerminated }) {
         </div>
       )}
 
+      {record.status === "running" && record.kind === "agent" && (
+        <RedeployControl record={record} onChanged={onChanged} />
+      )}
+
       {record.status === "running" && (
         <TerminateControl
           instanceId={record.instance_id}
@@ -464,6 +594,7 @@ function DeploymentRow({ record, records, onChanged, onTerminated }) {
 
 const LEFTOVER_KIND_LABELS = {
   instance: "EC2 instance",
+  address: "Fixed address",
   security_group: "Security group",
   secrets: "Secrets",
   bucket: "S3 bucket",

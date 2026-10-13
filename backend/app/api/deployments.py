@@ -1,5 +1,4 @@
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -12,9 +11,7 @@ from app.api.deploy import AWS_REGIONS, resolve_ingress
 from app.api.deploy_feedback import has_active_deployment
 from app.aws.credentials import NoCredentialsError, get_session
 from app.aws.ec2 import normalize_allowed_ips, set_security_group_cidrs
-from app.aws.feedback_stack import EBS_SIZE_GB as FEEDBACK_EBS_SIZE_GB
-from app.aws.feedback_stack import INSTANCE_TYPE as FEEDBACK_INSTANCE_TYPE
-from app.aws.pricing import estimate_ec2_cost, estimate_s3_cost
+from app.aws.pricing import deployment_cost
 from app.aws.sweep import delete_leftover, scan_bucket, scan_region
 from app.core import feedback_client, history
 from app.core.config import settings
@@ -42,6 +39,8 @@ class DeploymentRecord(BaseModel):
     # Only set for deployments with their own security group (i.e. an
     # editable IP allowlist) — older ones share one and have none recorded.
     security_group_id: str | None = None
+    # Set for agents with a fixed address (Elastic IP) — their URL survives redeploys.
+    allocation_id: str | None = None
     links: list[DeploymentLink]
     # Local paths of the feedback exported right before teardown.
     exports: dict[str, str] | None = None
@@ -50,39 +49,10 @@ class DeploymentRecord(BaseModel):
 
 
 def _compute_cost(raw: dict[str, Any]) -> float | None:
-    """Cost incurred so far — computed fresh on every call, never stored,
-    since it depends on the current time for a running deployment. For a
-    terminated one, the cutoff is `terminated_at` rather than now: without
-    that, a terminated instance's shown cost would keep climbing forever
-    every time this endpoint is called, which is simply wrong — billing
-    stopped the moment AWS tore the instance down."""
+    """Cost so far (see pricing.deployment_cost) — computed fresh on every
+    call, never stored, since it depends on the current time."""
     try:
-        deployed_at = datetime.fromisoformat(raw["deployed_at"])
-        terminated_at = raw.get("terminated_at")
-        cutoff = datetime.fromisoformat(terminated_at) if terminated_at else datetime.now(UTC)
-        decisions = raw.get("decisions") or {}
-
-        if raw["kind"] == "agent":
-            instance_type = decisions.get("instance_type")
-            ebs_size_gb = decisions.get("ebs_size_gb")
-            if not instance_type or ebs_size_gb is None:
-                return None
-            return estimate_ec2_cost(instance_type, ebs_size_gb, deployed_at, now=cutoff)
-
-        # feedback: fixed instance size, plus the (already-frozen, since the
-        # bundle is deleted right after its own health check) S3 relay cost.
-        ec2_cost = estimate_ec2_cost(FEEDBACK_INSTANCE_TYPE, FEEDBACK_EBS_SIZE_GB, deployed_at, now=cutoff)
-        bundle_size = decisions.get("bundle_size_bytes")
-        bundle_uploaded_at = decisions.get("bundle_uploaded_at")
-        if not bundle_size or not bundle_uploaded_at:
-            return ec2_cost
-        bundle_deleted_at = decisions.get("bundle_deleted_at")
-        s3_cost = estimate_s3_cost(
-            bundle_size,
-            datetime.fromisoformat(bundle_uploaded_at),
-            datetime.fromisoformat(bundle_deleted_at) if bundle_deleted_at else None,
-        )
-        return ec2_cost + s3_cost
+        return deployment_cost(raw)
     except Exception:
         logger.exception("failed to compute cost estimate for deployment %s", raw.get("deployment_id"))
         return None
@@ -207,7 +177,7 @@ def download_questionnaire_version(deployment_id: str, version: int) -> JSONResp
     )
 
 
-LeftoverKind = Literal["instance", "security_group", "secrets", "bucket"]
+LeftoverKind = Literal["instance", "address", "security_group", "secrets", "bucket"]
 
 
 class LeftoverItem(BaseModel):

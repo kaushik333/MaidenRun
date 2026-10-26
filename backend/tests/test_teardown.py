@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from moto import mock_aws
 
 from app.aws import ec2
+from app.aws.feedback_stack import launch_feedback_stack
 from app.aws.s3_bundle import ensure_bundle_bucket
 from app.aws.sweep import scan_region
 from app.core import history
@@ -251,3 +252,14 @@ def test_a_missing_permission_on_delete_says_how_to_fix_it(monkeypatch) -> None:
     assert result["ok"] is False
     assert "infra/iam-policy.json" in result["error"]
     assert "s3:DeleteBucket" in result["error"]  # AWS's own detail is kept
+
+
+@mock_aws
+def test_sweep_warns_that_deleting_a_stray_feedback_stack_loses_its_feedback() -> None:
+    session = _session()
+    create_instance_profile(session)
+    launch_feedback_stack(session, deployment_id="lostfdbk0001", bucket="b", key="k.tar.gz")
+
+    item = next(i for i in client.get("/leftovers").json()["items"] if i["kind"] == "instance")
+    assert item["destroys_feedback"] is True
+    assert "destroys any feedback" in item["detail"]

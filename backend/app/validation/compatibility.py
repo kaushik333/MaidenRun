@@ -98,7 +98,7 @@ def compatibility_checklist(repo_dir: Path) -> list[CheckResult]:
         )
 
     if len(compose_files) > 1:
-        checks.append(CheckResult(ok=False, text="Multi-file compose setup detected — not supported in v1"))
+        checks.append(CheckResult(ok=False, text="Multi-file compose setup detected — not supported"))
     else:
         checks.append(CheckResult(ok=True, text="No multi-file compose chaining detected"))
 

@@ -40,14 +40,21 @@ def scan_region(session: boto3.Session, running_ids: set[str], warnings: set[str
         tags = {tag["Key"]: tag["Value"] for tag in instance.get("Tags", [])}
         if tags.get("deployment_id") in running_ids:
             continue
+        # A stray feedback stack can't be exported first — its dashboard token
+        # lived in the deployment record that's gone — so say what's at stake.
+        is_feedback = any(g["GroupName"].startswith("maidenrun-feedback") for g in instance["SecurityGroups"])
+        detail = f"{instance['InstanceType']}, {instance['State']['Name']}"
+        if is_feedback:
+            detail += " — a feedback stack: deleting it destroys any feedback on it, with no export"
         items.append({
             "kind": "instance",
             "region": region,
             "id": instance["InstanceId"],
             "deployment_id": tags.get("deployment_id"),
             "label": tags.get("Name", instance["InstanceId"]),
-            "detail": f"{instance['InstanceType']}, {instance['State']['Name']}",
+            "detail": detail,
             "hourly_usd": instance_hourly_rate(instance["InstanceType"]),
+            "destroys_feedback": is_feedback,
         })
 
     addresses = ec2.describe_addresses(Filters=[{"Name": "tag-key", "Values": ["deployment_id"]}])["Addresses"]

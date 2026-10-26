@@ -40,8 +40,7 @@ the AWS account you want to deploy into.
    each launched EC2 instance rather than something you hold credentials
    for. This is what lets the deployed agent fetch its own LLM API key at
    boot without the key ever appearing in plaintext in the instance's
-   user-data (see the Security Considerations section of `IDEA.md` for
-   why that matters).
+   user-data, which anyone who can describe the instance in AWS can read.
    - IAM console → Roles → Create role → Trusted entity type: **AWS
      service** → Use case: **EC2**.
    - Name it exactly `maidenrun-instance-role` (the platform

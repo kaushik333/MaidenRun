@@ -377,9 +377,8 @@ def deploy_cost_estimate(deployment_id: str) -> CostEstimate:
 
 @router.post("/terminate", response_model=TerminateResponse)
 def terminate(request: TerminateRequest, background_tasks: BackgroundTasks) -> TerminateResponse:
-    # No access key/secret here on purpose — this is exactly the case the local
-    # credential cache (Phase 4) exists for: reauthentication for an action after
-    # the initial deploy should never require re-pasting the key.
+    # No access key/secret here on purpose: get_session() uses the AWS profile or
+    # the key saved on first deploy, so acting on a deployment never re-asks for it.
     record = history.get_deployment(request.deployment_id) if request.deployment_id else None
     with _deployments_lock:
         if request.deployment_id in _redeploying:

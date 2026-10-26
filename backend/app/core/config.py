@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     # network other than your own machine's loopback.
     control_plane_secret: str = ""
 
-    # reserved app/feedback ports (fixed contract, see IDEA.md)
+    # reserved ports — a fixed contract: the agent UI on 8001, the feedback form and dashboard on 8002/8003
     app_port: int = 8001
     feedback_form_port: int = 8002
     feedback_dashboard_port: int = 8003

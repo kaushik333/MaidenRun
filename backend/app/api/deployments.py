@@ -188,6 +188,8 @@ class LeftoverItem(BaseModel):
     detail: str = ""
     hourly_usd: float | None = None
     deployment_id: str | None = None
+    # A stray feedback stack instance — deleting it loses its feedback unexported.
+    destroys_feedback: bool = False
 
 
 class LeftoversResponse(BaseModel):

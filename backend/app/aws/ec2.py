@@ -106,7 +106,7 @@ def get_default_vpc_id(ec2) -> str:
     if not default_vpcs:
         raise Ec2LaunchError(
             "No default VPC found in this account/region. The platform relies on the "
-            "account's default VPC and subnets for v0 — create one (or restore it via "
+            "account's default VPC and subnets — create one (or restore it via "
             "the VPC console's 'Actions > Create default VPC') and try again."
         )
     return default_vpcs[0]["VpcId"]

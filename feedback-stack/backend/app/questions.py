@@ -21,8 +21,8 @@ class Question(BaseModel):
     optional: bool = False
 
 
-# The four dimensions + open text from IDEA.md's design doc: understanding,
-# accuracy, error-free completion, and would-use-again, plus one free-form
+# Used when no questionnaire is uploaded: four dimensions — understanding,
+# accuracy, error-free completion and would-use-again — plus one free-form
 # field any domain expert can answer without technical knowledge.
 DEFAULT_QUESTIONS: list[Question] = [
     Question(

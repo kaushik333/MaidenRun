@@ -705,7 +705,7 @@ function Leftovers({ onChanged }) {
                   <input type="checkbox" checked={selected.has(leftoverKey(item))} onChange={() => toggle(item)} />
                   <span className="leftover-kind">{LEFTOVER_KIND_LABELS[item.kind]}</span>
                   <span className="leftover-label">{item.label}</span>
-                  <span className="leftover-detail">
+                  <span className={`leftover-detail${item.destroys_feedback ? " leftover-detail--danger" : ""}`}>
                     {item.region} · {item.detail}
                     {item.hourly_usd ? ` · $${item.hourly_usd.toFixed(4)}/hr` : ""}
                   </span>
@@ -728,7 +728,10 @@ function Leftovers({ onChanged }) {
             <div className="terminate-confirm-row">
               <span className="terminate-confirm-text">
                 Delete {selected.size} selected resource{selected.size === 1 ? "" : "s"}? Instances are terminated
-                along with their disks. This can't be undone.
+                along with their disks.
+                {items.some((item) => item.destroys_feedback && selected.has(leftoverKey(item))) &&
+                  " That includes a feedback stack: its feedback is deleted with it and can't be exported first."}{" "}
+                This can't be undone.
               </span>
               <div className="terminate-confirm-actions">
                 <button

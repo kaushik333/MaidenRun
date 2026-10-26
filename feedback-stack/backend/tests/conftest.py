@@ -33,9 +33,8 @@ def _wait_until_ready(deadline: float) -> None:
 
 def pytest_configure(config) -> None:
     """Spins up a real, throwaway postgres:16 container for the whole test
-    session — the exit test in plan.md's Phase 7 explicitly wants feedback
-    rows verified against real Postgres, not a stand-in that wouldn't catch
-    a real SQL/JSONB mistake."""
+    session — feedback rows are verified against real Postgres, not a stand-in
+    that wouldn't catch a real SQL/JSONB mistake."""
     subprocess.run(["docker", "rm", "-f", CONTAINER_NAME], capture_output=True)
     subprocess.run(
         [

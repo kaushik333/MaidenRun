@@ -1364,6 +1364,10 @@ body {
   font-size: 0.78rem;
 }
 
+.leftover-detail--danger {
+  color: var(--color-danger);
+}
+
 /* ---- IP allowlist (deploy forms + Deployments tab editor) ---- */
 .allowed-ips-input {
   resize: vertical;

@@ -1,14 +1,11 @@
 from datetime import UTC, datetime
 
-# Illustrative on-demand rates (us-east-1) — the single source of truth for
-# cost estimates shown in the control plane UI, replacing the client-side
-# guess DeployForm.jsx's cost widget used before Phase 10.
+# On-demand rates (us-east-1) for the instance types the deploy form offers —
+# the single source of truth for every cost estimate shown in the UI.
 EC2_HOURLY_RATES = {
     "t3.small": 0.0208,
     "t3.medium": 0.0416,
     "m5.xlarge": 0.192,
-    "g4dn.xlarge": 0.526,
-    "g5.xlarge": 1.006,
 }
 EBS_GB_MONTH_RATE = 0.08  # gp3, $/GB-month
 # Every instance here has exactly one public IPv4 address — its own, or an

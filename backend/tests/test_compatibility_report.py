@@ -54,7 +54,7 @@ def test_checklist_multi_file_compose() -> None:
         ),
         (False, "Could not confirm host port 8001 — resolve the entry point issue above first"),
         (False, "Could not confirm reserved ports 8002/8003 — resolve the entry point issue above first"),
-        (False, "Multi-file compose setup detected — not supported in v1"),
+        (False, "Multi-file compose setup detected — not supported"),
     ]
 
 

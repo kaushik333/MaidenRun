@@ -7,6 +7,8 @@ import boto3
 from botocore.exceptions import ClientError
 from fastapi.testclient import TestClient
 from moto import mock_aws
+from moto.core import DEFAULT_ACCOUNT_ID as ACCOUNT_ID
+from moto.ec2.models import ec2_backends
 
 from app.aws import ec2
 from app.aws.feedback_stack import launch_feedback_stack
@@ -263,3 +265,19 @@ def test_sweep_warns_that_deleting_a_stray_feedback_stack_loses_its_feedback() -
     item = next(i for i in client.get("/leftovers").json()["items"] if i["kind"] == "instance")
     assert item["destroys_feedback"] is True
     assert "destroys any feedback" in item["detail"]
+
+
+@mock_aws
+def test_sweep_ignores_an_instance_still_shutting_down_and_its_security_group() -> None:
+    session = _session()
+    create_instance_profile(session)
+    launched = ec2.launch_app_instance(
+        session, deployment_id="gone00000004", repo_url="https://github.com/x/y", entry_point="compose",
+        instance_type="t3.small", ebs_size_gb=20, secrets={},
+    )
+    # Right after Terminate: AWS reports the instance as shutting down for about a minute.
+    instance = ec2_backends[ACCOUNT_ID][settings.aws_default_region].get_instance(launched["instance_id"])
+    instance._state.name, instance._state.code = "shutting-down", 32
+
+    items = scan_region(session, running_ids=set(), warnings=set())
+    assert not [i for i in items if i["kind"] in ("instance", "security_group")]

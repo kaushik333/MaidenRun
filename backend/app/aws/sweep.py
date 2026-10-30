@@ -14,7 +14,9 @@ ADDRESS_HOURLY_USD = PUBLIC_IPV4_HOURLY
 # /maidenrun/<deployment_id>/ path. That's what lets a sweep find anything the
 # control plane lost track of (a crash mid-deploy, a deleted data/ folder, a
 # region nobody is looking at).
-ACTIVE_STATES = ["pending", "running", "stopping", "stopped"]
+# "shutting-down" is fetched only so its security group counts as in use until
+# AWS finishes terminating it (about a minute); the instance itself isn't listed.
+ACTIVE_STATES = ["pending", "running", "shutting-down", "stopping", "stopped"]
 
 
 def scan_region(session: boto3.Session, running_ids: set[str], warnings: set[str]) -> list[dict]:
@@ -38,7 +40,7 @@ def scan_region(session: boto3.Session, running_ids: set[str], warnings: set[str
     ]
     for instance in instances:
         tags = {tag["Key"]: tag["Value"] for tag in instance.get("Tags", [])}
-        if tags.get("deployment_id") in running_ids:
+        if tags.get("deployment_id") in running_ids or instance["State"]["Name"] == "shutting-down":
             continue
         # A stray feedback stack can't be exported first — its dashboard token
         # lived in the deployment record that's gone — so say what's at stake.

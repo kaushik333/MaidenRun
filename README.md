@@ -62,7 +62,19 @@ MaidenRun runs your repo with one command, so it needs:
 - **One entry point at the repo root:** a `compose.yaml` / `docker-compose.yml`, or a single `Dockerfile`.
 - **The agent's UI on port 8001.** Ports 8002 and 8003 are reserved for the feedback form and dashboard.
 
-**Check** in the app tells you what's missing. To fix a repo automatically, give [adapt.md](backend/app/templates/adapt.md) to your coding agent.
+**Check** in the app tells you what's missing.
+
+## Examples
+
+Any framework works, as long as the UI is on port 8001. Paste one of these into MaidenRun to try it:
+
+| Example | Framework | UI |
+|---|---|---|
+| [Research agent](https://github.com/kaushik333/maidenrun-example-langgraph): plans searches and writes a cited report | LangGraph | Gradio |
+| [Trip planner crew](https://github.com/kaushik333/maidenrun-example-crewai): a local guide and a planner build an itinerary | CrewAI | Streamlit |
+| [Support bot](https://github.com/kaushik333/maidenrun-example-openai-agents): answers order and policy questions with tools | OpenAI Agents SDK | Chainlit |
+
+Each needs only an [OpenRouter](https://openrouter.ai) key, entered as `OPENROUTER_API_KEY` in the deploy form.
 
 ## How it works
 

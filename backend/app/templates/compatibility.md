@@ -3,8 +3,7 @@
 Hand this file to your own coding agent (or read it yourself) to check
 whether this repo already fits the deploy platform's entry-point contract —
 **without changing anything**. This is read-only: it only inspects the repo
-and reports back. If you want the repo actually restructured to fix any
-gaps found here, use `adapt.md` instead.
+and reports back.
 
 ## The contract
 

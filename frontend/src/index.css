@@ -1547,6 +1547,12 @@ body {
   z-index: 1;
 }
 
+/* Fill the row so code blocks share one width; min-width lets them scroll on phones. */
+.setup-step-body {
+  flex: 1;
+  min-width: 0;
+}
+
 .setup-step-body h3 {
   font-size: 1.02rem;
   margin: 0 0 0.35rem;
@@ -1557,7 +1563,6 @@ body {
   color: var(--color-text-muted);
   margin: 0;
   line-height: 1.55;
-  max-width: 62ch;
 }
 
 .setup-step-body code {
@@ -1590,7 +1595,6 @@ body {
   overflow-x: auto;
   font-size: 0.82rem;
   line-height: 1.55;
-  max-width: 72ch;
 }
 
 .setup-code code {

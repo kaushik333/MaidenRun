@@ -63,3 +63,4 @@ def test_health_endpoint_never_requires_signature(monkeypatch) -> None:
     monkeypatch.setattr(settings, "control_plane_secret", "test-secret")
     response = client.get("/health")
     assert response.status_code == 200
+    assert response.json()["secret_required"] is True

@@ -21,6 +21,7 @@ function getInitialTheme() {
 
 export default function App() {
   const [status, setStatus] = useState("checking...");
+  const [secretRequired, setSecretRequired] = useState(false);
   const [activeTab, setActiveTab] = useState("deploy");
   const [lastDeploy, setLastDeploy] = useState(null);
   const [feedbackDeploy, setFeedbackDeploy] = useState(null);
@@ -66,7 +67,10 @@ export default function App() {
   useEffect(() => {
     fetch(`${BACKEND_URL}/health`)
       .then((res) => res.json())
-      .then((data) => setStatus(data.status))
+      .then((data) => {
+        setStatus(data.status);
+        setSecretRequired(data.secret_required);
+      })
       .catch(() => setStatus("unreachable"));
   }, []);
 
@@ -134,7 +138,7 @@ export default function App() {
             <span className="status-dot" />
             backend: {status}
           </span>
-          <ApiSecretField />
+          {secretRequired && <ApiSecretField />}
         </header>
 
         <div className="segmented tab-bar" role="tablist" aria-label="Sections">

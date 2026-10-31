@@ -8,7 +8,7 @@ client = TestClient(app)
 def test_health() -> None:
     response = client.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    assert response.json() == {"status": "ok", "secret_required": False}
 
 
 def test_unexpected_errors_reach_the_browser_as_json_with_cors_headers(monkeypatch) -> None:

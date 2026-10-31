@@ -2,10 +2,9 @@ import { useState } from "react";
 import { getStoredSecret, setStoredSecret } from "./apiClient";
 import PasswordField from "./PasswordField.jsx";
 
-// Only relevant once the backend has CONTROL_PLANE_SECRET set (see
-// backend/app/core/auth.py) — local/dev with no secret configured never
-// needs this open. One paste, once per browser; apiClient.js signs every
-// request with it from then on.
+// Only shown once the backend has CONTROL_PLANE_SECRET set (App.jsx checks
+// secret_required from /health; see backend/app/core/auth.py). One paste,
+// once per browser; apiClient.js signs every request with it from then on.
 export default function ApiSecretField() {
   const [open, setOpen] = useState(false);
   const [value, setValue] = useState(getStoredSecret);

@@ -21,6 +21,8 @@ gives you a link to share, and collects ratings and comments on a live feedback 
 
 </div>
 
+https://github.com/user-attachments/assets/3cdb54c1-a62e-4f8d-aef2-3e04ef59d9f5
+
 ## Why MaidenRun
 
 Tracing tools like LangSmith and Langfuse show you what your agent *did*. MaidenRun tells you what people *thought of it*. That's the question that matters before launch, and it usually means hacking together hosting, a form, and a spreadsheet.
